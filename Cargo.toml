@@ -71,3 +71,8 @@ embuild = "0.33"
 remote_component = { name = "espressif/esp-sr", version = "^2.0.0" }
 bindings_header = "components/esp_sr/bindgen.h"
 bindings_module = "esp_sr"
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/es8311"]
+bindings_header = "components/es8311/wrapper.h"
+bindings_module = "es8311"

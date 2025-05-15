@@ -26,7 +26,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.2.3
+    version: 5.4.1
 direct_dependencies:
 - espressif/esp-sr
 manifest_hash: 02fa0b8da76d97234f1906120eca12c93f5d7a9e2bb8fef29c38a5e8ce1fa669
