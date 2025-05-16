@@ -45,7 +45,7 @@ unsafe fn afe_init() -> (
     afe_config.pcm_config.ref_num = 0;
     afe_config.pcm_config.sample_rate = 16000;
     afe_config.afe_ringbuf_size = 25;
-    afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_0;
+    afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_4;
     afe_config.agc_init = true;
 
     log::info!("{afe_config:?}");
@@ -246,29 +246,31 @@ pub async fn i2s_test() -> anyhow::Result<()> {
     driver.tx_enable()?;
     driver.rx_enable()?;
 
-    let (mut rx, mut tx) = driver.split();
+    // let (mut rx, mut tx) = driver.split();
 
-    let mut buf = vec![0u8; 5 * 2 * SAMPLE_RATE as usize];
+    let mut buf = [0u8; 2 * 1600];
     let mut send_buf = vec![];
-    let n = rx.read(&mut buf, 1000 / PORT_TICK_PERIOD_MS)?;
 
-    tx.write_all_async(&WAKE_WAV).await?;
+    driver.write_all_async(&WAKE_WAV).await?;
 
-    for i in 0..1 {
-        log::info!("Iteration {}", i);
-        log::info!("Reading...");
+    let mut speech = false;
 
-        let n = rx.read(&mut buf, 1000 / PORT_TICK_PERIOD_MS)?;
+    let mut skip = 0;
+
+    'a: loop {
+        let n = driver.read(&mut buf, 1000 / PORT_TICK_PERIOD_MS)?;
         log::info!("Read {} bytes", n);
         log::info!("Max: {:?}", max(&buf[..n]));
+        // if skip > 0 {
+        //     skip -= 1;
+        //     continue 'a;
+        // }
         // mut_data(&mut buf[..n]);
-
-        for (j, i2s_buff) in buf[..n].chunks(160 * 2).enumerate() {
-            let n = afe_handle.feed(i2s_buff);
-            // log::info!("Feed: {}", n);
+        let i2s_data = &buf[..n];
+        for i2s_chunk in i2s_data.chunks(160 * 2) {
+            let n = afe_handle.feed(i2s_chunk);
+            log::info!("Feed: {}", n);
             if n == 0 {
-                log::info!("Fetching... {j}");
-                let mut k = 0;
                 loop {
                     let result = afe_handle.fetch();
                     if let Err(e) = &result {
@@ -276,7 +278,7 @@ pub async fn i2s_test() -> anyhow::Result<()> {
                         break;
                     }
                     let result = result.unwrap();
-                    log::info!("Result {k}: {}", result.data.len());
+                    log::info!("Result: {}", result.data.len());
                     // log::info!("VAD state: {}", vad_state);
                     // log::info!("VAD cache: {:?}", result.vad_cache_size);
                     if result.data.is_empty() {
@@ -284,20 +286,24 @@ pub async fn i2s_test() -> anyhow::Result<()> {
                     }
 
                     if result.speech {
+                        speech = true;
                         send_buf.extend_from_slice(&result.data);
+                        continue;
                     }
 
-                    k += 1;
+                    if speech {
+                        log::info!("Sending {} bytes", send_buf.len());
+                        driver.write_all_async(&send_buf).await?;
+                        send_buf.clear();
+                        speech = false;
+                        // skip = 10;
+                        continue 'a;
+                    }
                 }
-                let n = afe_handle.feed(i2s_buff);
+                let n = afe_handle.feed(i2s_chunk);
             }
         }
-
-        log::info!("Writing...");
-        tx.write_all_async(&send_buf).await?;
-        log::info!("Wrote {} bytes", send_buf.len());
-        // driver.tx_disable()?;
     }
 
-    Ok(())
+    // Ok(())
 }
