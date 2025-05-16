@@ -28,12 +28,12 @@ fn main() {
 
     log_heap();
 
-    let r = esp_idf_svc::hal::task::block_on(audio::i2s_test());
-    if let Err(e) = r {
-        log::error!("Error: {}", e);
-    } else {
-        log::info!("I2S test completed successfully");
-    }
+    let r = esp_idf_svc::hal::task::block_on(audio::i2s_task());
+    // if let Err(e) = r {
+    //     log::error!("Error: {}", e);
+    // } else {
+    //     log::info!("I2S test completed successfully");
+    // }
 }
 
 pub fn log_heap() {

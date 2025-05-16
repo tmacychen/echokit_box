@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use esp_idf_svc::hal::i2s::{config, I2sDriver, I2sRx};
 
 use esp_idf_svc::sys::esp_sr;
@@ -15,17 +17,6 @@ pub fn audio_init() {
         hal_driver::es8311_set_voice_volume(65); /* 设置喇叭音量，建议不超过65 */
         hal_driver::es8311_set_voice_mute(0); /* 打开DAC */
     }
-}
-
-fn max(buf: &[u8]) -> (i32, i32) {
-    let mut max = 0;
-    let mut min = 0;
-    for x in buf.chunks(4) {
-        let sample = i16::from_le_bytes([x[0], x[1]]) as i32;
-        max = max.max(sample.abs());
-        min = min.min(sample.abs());
-    }
-    (max, min)
 }
 
 unsafe fn afe_init() -> (
@@ -46,7 +37,7 @@ unsafe fn afe_init() -> (
     afe_config.pcm_config.sample_rate = 16000;
     afe_config.afe_ringbuf_size = 25;
     afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_4;
-    afe_config.agc_init = true;
+    // afe_config.agc_init = true;
 
     log::info!("{afe_config:?}");
 
@@ -92,6 +83,15 @@ impl AFE {
         }
     }
     // returns the number of bytes fed
+
+    fn reset(&self) {
+        let afe_handle = self.handle;
+        let afe_data = self.data;
+        unsafe {
+            (afe_handle.as_ref().unwrap().reset_vad.unwrap())(afe_data);
+        }
+    }
+
     fn feed(&self, data: &[u8]) -> i32 {
         let afe_handle = self.handle;
         let afe_data = self.data;
@@ -104,7 +104,7 @@ impl AFE {
         let afe_handle = self.handle;
         let afe_data = self.data;
         unsafe {
-            let result = (afe_handle.as_ref().unwrap().fetch_with_delay.unwrap())(afe_data, 1)
+            let result = (afe_handle.as_ref().unwrap().fetch.unwrap())(afe_data)
                 .as_mut()
                 .unwrap();
 
@@ -216,6 +216,119 @@ fn i2s_rx_task<'d>(rx: &mut DriverI2sRx, afe_handle: AFE) -> anyhow::Result<()> 
     }
 }
 
+pub async fn i2s_task() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let afe_handle = Arc::new(AFE::new());
+    let afe_handle_ = afe_handle.clone();
+    let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
+    let r = i2s_test_1(afe_handle, rx).await;
+    if let Err(e) = r {
+        log::error!("Error: {}", e);
+    } else {
+        log::info!("I2S test completed successfully");
+    }
+    let r = afe_r.join().unwrap();
+    if let Err(e) = r {
+        log::error!("Error: {}", e);
+    } else {
+        log::info!("AFE worker completed successfully");
+    }
+}
+
+fn afe_worker(
+    afe_handle: Arc<AFE>,
+    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> anyhow::Result<()> {
+    let mut speech = false;
+    let mut send_buf = vec![];
+    loop {
+        let result = afe_handle.fetch();
+        if let Err(e) = &result {
+            continue;
+        }
+        let result = result.unwrap();
+        // log::info!("Result: {}", result.data.len());
+        // log::info!("VAD state: {}", vad_state);
+        // log::info!("VAD cache: {:?}", result.vad_cache_size);
+        if result.data.is_empty() {
+            break;
+        }
+
+        if result.speech {
+            speech = true;
+            send_buf.extend_from_slice(&result.data);
+            // if send_buf.len() > SAMPLE_RATE as usize / 10 {
+            //     log::info!("Sending {} bytes", send_buf.len());
+            //     tx.send(send_buf)
+            //         .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
+            //     send_buf = vec![]
+            // }
+            continue;
+        }
+
+        if speech {
+            log::info!("Sending {} bytes", send_buf.len());
+            tx.send(send_buf)
+                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
+            send_buf = vec![];
+            speech = false;
+        }
+    }
+    Ok(())
+}
+
+async fn i2s_test_1(
+    afe_handle: Arc<AFE>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+) -> anyhow::Result<()> {
+    // let timer = esp_idf_svc::timer::EspTimerService::new()?;
+    log::info!("PORT_TICK_PERIOD_MS = {}", PORT_TICK_PERIOD_MS);
+    let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take().unwrap();
+    let i2s_config = config::StdConfig::new(
+        config::Config::default().auto_clear(true),
+        config::StdClkConfig::from_sample_rate_hz(SAMPLE_RATE),
+        config::StdSlotConfig::philips_slot_default(
+            config::DataBitWidth::Bits16,
+            config::SlotMode::Mono,
+        ),
+        config::StdGpioConfig::default(),
+    );
+
+    let bclk = peripherals.pins.gpio21;
+    let din = peripherals.pins.gpio47;
+    let dout = peripherals.pins.gpio14;
+    let ws = peripherals.pins.gpio13;
+
+    let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
+
+    let mut driver =
+        I2sDriver::new_std_bidir(peripherals.i2s0, &i2s_config, bclk, din, dout, mclk, ws).unwrap();
+    driver.tx_enable()?;
+    driver.rx_enable()?;
+
+    // let (mut rx, mut tx) = driver.split();
+
+    let mut buf = [0u8; 2 * 160];
+
+    driver.write_all_async(&WAKE_WAV).await?;
+
+    loop {
+        match rx.try_recv() {
+            Ok(data) => {
+                log::info!("Send {} bytes", data.len());
+                driver.write_all_async(&data).await?;
+                afe_handle.reset();
+            }
+            _ => {
+                let n = driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
+                let n = afe_handle.feed(&buf[..n]);
+            }
+        }
+    }
+
+    // Ok(())
+}
+
 pub async fn i2s_test() -> anyhow::Result<()> {
     // let (afe_handle, afe_data) = unsafe { afe_init() };
 
@@ -248,26 +361,20 @@ pub async fn i2s_test() -> anyhow::Result<()> {
 
     // let (mut rx, mut tx) = driver.split();
 
-    let mut buf = [0u8; 2 * 1600];
+    let mut buf = [0u8; 2 * 160];
     let mut send_buf = vec![];
 
     driver.write_all_async(&WAKE_WAV).await?;
 
     let mut speech = false;
 
-    let mut skip = 0;
-
     'a: loop {
-        let n = driver.read(&mut buf, 1000 / PORT_TICK_PERIOD_MS)?;
+        let n = driver.read_async(&mut buf).await?;
         log::info!("Read {} bytes", n);
         log::info!("Max: {:?}", max(&buf[..n]));
-        // if skip > 0 {
-        //     skip -= 1;
-        //     continue 'a;
-        // }
-        // mut_data(&mut buf[..n]);
-        let i2s_data = &buf[..n];
-        for i2s_chunk in i2s_data.chunks(160 * 2) {
+
+        let i2s_chunk = &buf[..n];
+        {
             let n = afe_handle.feed(i2s_chunk);
             log::info!("Feed: {}", n);
             if n == 0 {
