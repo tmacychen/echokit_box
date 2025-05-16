@@ -114,12 +114,12 @@ impl Default for UI {
         display.clear(ColorFormat::WHITE).unwrap();
 
         let state_area = Rectangle::new(
-            display.bounding_box().top_left,
-            Size::new(DISPLAY_WIDTH as u32, 16),
+            display.bounding_box().top_left + Point::new(0, 0),
+            Size::new(DISPLAY_WIDTH as u32, 32),
         );
         let text_area = Rectangle::new(
-            display.bounding_box().top_left + Point::new(0, 16),
-            Size::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32 - 16),
+            display.bounding_box().top_left + Point::new(0, 32),
+            Size::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32 - 32),
         );
 
         let image = tinygif::Gif::<ColorFormat>::from_slice(GIF_IMG).unwrap();
@@ -201,12 +201,16 @@ fn flush_area<const COLOR_WIDTH: u32>(data: &[u8], size: Size, area: Rectangle) 
             end_y as i32,
         )
     } else {
+        log::warn!("flush_area error: data out of bounds");
+        log::warn!(
+            "start_index: {start_index}, area_len: {data_len}, data_len: {}",
+            data.len()
+        );
         -1
     }
 }
 
 impl UI {
-    // 横向42个字符
     pub fn display_flush(&mut self) -> anyhow::Result<()> {
         self.state_background
             .iter()
@@ -229,17 +233,6 @@ impl UI {
         .draw(self.display.as_mut())?;
 
         if !self.reset {
-            // let lines = self.text.lines().count();
-            // Text::with_alignment(
-            //     &self.text,
-            //     self.text_area.center() + Point::new(0, -6 * (lines as i32)),
-            //     U8g2TextStyle::new(
-            //         u8g2_fonts::fonts::u8g2_font_wqy16_t_gb2312b,
-            //         ColorFormat::CSS_WHEAT,
-            //     ),
-            //     Alignment::Center,
-            // )
-            // .draw(self.display.as_mut())?;
             let textbox_style = embedded_text::style::TextBoxStyleBuilder::new()
                 .height_mode(embedded_text::style::HeightMode::FitToText)
                 .alignment(embedded_text::alignment::HorizontalAlignment::Center)
@@ -282,7 +275,7 @@ impl UI {
                 self.display.data(),
                 self.display.size(),
                 Rectangle::new(
-                    self.text_area.top_left,
+                    self.state_area.top_left,
                     Size::new(
                         self.text_area.size.width,
                         self.text_area.size.height + self.state_area.size.height,

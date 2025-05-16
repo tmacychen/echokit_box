@@ -140,82 +140,6 @@ struct DriverI2sTx<'d>(esp_idf_svc::hal::i2s::I2sDriverRef<'d, I2sRx>);
 unsafe impl Send for DriverI2sRx<'_> {}
 unsafe impl Send for DriverI2sTx<'_> {}
 
-pub async fn i2s_worker() -> anyhow::Result<()> {
-    let afe_handle = AFE::new();
-
-    log::info!("PORT_TICK_PERIOD_MS = {}", PORT_TICK_PERIOD_MS);
-    let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take().unwrap();
-    let i2s_config = config::StdConfig::new(
-        config::Config::default().auto_clear(true),
-        config::StdClkConfig::from_sample_rate_hz(SAMPLE_RATE),
-        config::StdSlotConfig::philips_slot_default(
-            config::DataBitWidth::Bits16,
-            config::SlotMode::Mono,
-        ),
-        config::StdGpioConfig::default(),
-    );
-
-    let bclk = peripherals.pins.gpio21;
-    let din = peripherals.pins.gpio47;
-    let dout = peripherals.pins.gpio14;
-    let ws = peripherals.pins.gpio13;
-
-    let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
-
-    let mut driver =
-        I2sDriver::new_std_bidir(peripherals.i2s0, &i2s_config, bclk, din, dout, mclk, ws).unwrap();
-    driver.tx_enable()?;
-    driver.rx_enable()?;
-
-    let (rx, tx) = driver.split();
-    let mut rx = DriverI2sRx(rx);
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            i2s_rx_task(&mut rx, afe_handle).unwrap();
-        });
-    });
-
-    Ok(())
-}
-
-fn i2s_rx_task<'d>(rx: &mut DriverI2sRx, afe_handle: AFE) -> anyhow::Result<()> {
-    let mut buf = vec![0u8; 5 * 2 * SAMPLE_RATE as usize];
-    let mut send_buf = vec![];
-
-    loop {
-        log::info!("Reading...");
-        let n = rx.0.read(&mut buf, 1000 / PORT_TICK_PERIOD_MS)?;
-        log::info!("Read {} bytes", n);
-        log::info!("Max: {:?}", max(&buf[..n]));
-
-        for (j, i2s_buff) in buf[..n].chunks(160 * 2).enumerate() {
-            let n = afe_handle.feed(i2s_buff);
-            if n == 0 {
-                log::info!("Fetching... {j}");
-                let mut k = 0;
-                loop {
-                    let result = afe_handle.fetch();
-                    if let Err(e) = &result {
-                        log::error!("Error fetching: {}", *e);
-                        break;
-                    }
-                    let result = result.unwrap();
-                    log::info!("Result {k}: {}", result.data.len());
-                    if result.data.is_empty() {
-                        break;
-                    }
-
-                    if result.speech {
-                        send_buf.extend_from_slice(&result.data);
-                    }
-
-                    k += 1;
-                }
-            }
-        }
-    }
-}
-
 pub async fn i2s_task() {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let afe_handle = Arc::new(AFE::new());
@@ -371,7 +295,6 @@ pub async fn i2s_test() -> anyhow::Result<()> {
     'a: loop {
         let n = driver.read_async(&mut buf).await?;
         log::info!("Read {} bytes", n);
-        log::info!("Max: {:?}", max(&buf[..n]));
 
         let i2s_chunk = &buf[..n];
         {
