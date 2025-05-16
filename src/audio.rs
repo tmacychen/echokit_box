@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use esp_idf_svc::hal::i2s::{config, I2sDriver, I2sRx};
+use esp_idf_svc::hal::gpio::AnyIOPin;
+use esp_idf_svc::hal::i2s::{config, I2s, I2sDriver, I2sRx, I2S0};
 
 use esp_idf_svc::sys::esp_sr;
 
@@ -140,12 +141,12 @@ struct DriverI2sTx<'d>(esp_idf_svc::hal::i2s::I2sDriverRef<'d, I2sRx>);
 unsafe impl Send for DriverI2sRx<'_> {}
 unsafe impl Send for DriverI2sTx<'_> {}
 
-pub async fn i2s_task() {
+pub async fn i2s_task(i2s: I2S0, bclk: AnyIOPin, din: AnyIOPin, dout: AnyIOPin, ws: AnyIOPin) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let afe_handle = Arc::new(AFE::new());
     let afe_handle_ = afe_handle.clone();
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
-    let r = i2s_test_1(afe_handle, rx).await;
+    let r = i2s_test_1(i2s, bclk, din, dout, ws, afe_handle, rx).await;
     if let Err(e) = r {
         log::error!("Error: {}", e);
     } else {
@@ -202,12 +203,16 @@ fn afe_worker(
 }
 
 async fn i2s_test_1(
+    i2s: I2S0,
+    bclk: AnyIOPin,
+    din: AnyIOPin,
+    dout: AnyIOPin,
+    ws: AnyIOPin,
     afe_handle: Arc<AFE>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
 ) -> anyhow::Result<()> {
     // let timer = esp_idf_svc::timer::EspTimerService::new()?;
     log::info!("PORT_TICK_PERIOD_MS = {}", PORT_TICK_PERIOD_MS);
-    let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take().unwrap();
     let i2s_config = config::StdConfig::new(
         config::Config::default().auto_clear(true),
         config::StdClkConfig::from_sample_rate_hz(SAMPLE_RATE),
@@ -218,15 +223,14 @@ async fn i2s_test_1(
         config::StdGpioConfig::default(),
     );
 
-    let bclk = peripherals.pins.gpio21;
-    let din = peripherals.pins.gpio47;
-    let dout = peripherals.pins.gpio14;
-    let ws = peripherals.pins.gpio13;
+    // let bclk = peripherals.pins.gpio21;
+    // let din = peripherals.pins.gpio47;
+    // let dout = peripherals.pins.gpio14;
+    // let ws = peripherals.pins.gpio13;
 
     let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
 
-    let mut driver =
-        I2sDriver::new_std_bidir(peripherals.i2s0, &i2s_config, bclk, din, dout, mclk, ws).unwrap();
+    let mut driver = I2sDriver::new_std_bidir(i2s, &i2s_config, bclk, din, dout, mclk, ws).unwrap();
     driver.tx_enable()?;
     driver.rx_enable()?;
 
