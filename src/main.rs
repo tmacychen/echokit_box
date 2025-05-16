@@ -1,10 +1,30 @@
+use embedded_graphics::prelude::{IntoStorage, RgbColor};
+
 mod audio;
+mod ui;
 
 fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
     let _fs = esp_idf_svc::io::vfs::MountedEventfs::mount(20).unwrap();
     audio::audio_init();
+    ui::lcd_init();
+
+    unsafe {
+        esp_idf_svc::sys::hal_driver::lcd_clear(ui::ColorFormat::RED.into_storage());
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        esp_idf_svc::sys::hal_driver::lcd_clear(ui::ColorFormat::GREEN.into_storage());
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        esp_idf_svc::sys::hal_driver::lcd_clear(ui::ColorFormat::BLUE.into_storage());
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        let r = ui::backgroud();
+        if let Err(e) = r {
+            log::error!("Error: {}", e);
+        } else {
+            log::info!("Background animation completed successfully");
+        }
+    }
 
     log_heap();
 

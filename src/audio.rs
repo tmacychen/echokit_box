@@ -6,14 +6,14 @@ const SAMPLE_RATE: u32 = 16000;
 const PORT_TICK_PERIOD_MS: u32 = 1000 / esp_idf_svc::sys::configTICK_RATE_HZ;
 
 pub fn audio_init() {
-    use esp_idf_svc::sys::es8311;
+    use esp_idf_svc::sys::hal_driver;
     unsafe {
-        es8311::myiic_init();
-        es8311::xl9555_init();
-        es8311::es8311_init(SAMPLE_RATE as i32);
-        es8311::xl9555_pin_write(es8311::SPK_CTRL_IO as _, 1);
-        es8311::es8311_set_voice_volume(65); /* 设置喇叭音量，建议不超过65 */
-        es8311::es8311_set_voice_mute(0); /* 打开DAC */
+        hal_driver::myiic_init();
+        hal_driver::xl9555_init();
+        hal_driver::es8311_init(SAMPLE_RATE as i32);
+        hal_driver::xl9555_pin_write(hal_driver::SPK_CTRL_IO as _, 1);
+        hal_driver::es8311_set_voice_volume(65); /* 设置喇叭音量，建议不超过65 */
+        hal_driver::es8311_set_voice_mute(0); /* 打开DAC */
     }
 }
 
@@ -100,13 +100,17 @@ impl AFE {
         }
     }
 
-    fn fetch(&self) -> AFEResult {
+    fn fetch(&self) -> Result<AFEResult, i32> {
         let afe_handle = self.handle;
         let afe_data = self.data;
         unsafe {
             let result = (afe_handle.as_ref().unwrap().fetch_with_delay.unwrap())(afe_data, 1)
                 .as_mut()
                 .unwrap();
+
+            if result.ret_value != 0 {
+                return Err(result.ret_value);
+            }
 
             let data_size = result.data_size;
             let vad_state = result.vad_state;
@@ -123,7 +127,7 @@ impl AFE {
             };
 
             let speech = vad_state == esp_sr::vad_state_t_VAD_SPEECH;
-            AFEResult { data, speech }
+            Ok(AFEResult { data, speech })
         }
     }
 }
@@ -191,6 +195,11 @@ fn i2s_rx_task<'d>(rx: &mut DriverI2sRx, afe_handle: AFE) -> anyhow::Result<()> 
                 let mut k = 0;
                 loop {
                     let result = afe_handle.fetch();
+                    if let Err(e) = &result {
+                        log::error!("Error fetching: {}", *e);
+                        break;
+                    }
+                    let result = result.unwrap();
                     log::info!("Result {k}: {}", result.data.len());
                     if result.data.is_empty() {
                         break;
@@ -262,6 +271,11 @@ pub async fn i2s_test() -> anyhow::Result<()> {
                 let mut k = 0;
                 loop {
                     let result = afe_handle.fetch();
+                    if let Err(e) = &result {
+                        log::error!("Error fetching: {}", *e);
+                        break;
+                    }
+                    let result = result.unwrap();
                     log::info!("Result {k}: {}", result.data.len());
                     // log::info!("VAD state: {}", vad_state);
                     // log::info!("VAD cache: {:?}", result.vad_cache_size);

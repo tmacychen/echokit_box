@@ -73,6 +73,6 @@ bindings_header = "components/esp_sr/bindgen.h"
 bindings_module = "esp_sr"
 
 [[package.metadata.esp-idf-sys.extra_components]]
-component_dirs = ["components/es8311"]
-bindings_header = "components/es8311/wrapper.h"
-bindings_module = "es8311"
+component_dirs = ["components/hal_driver"]
+bindings_header = "components/hal_driver/wrapper.h"
+bindings_module = "hal_driver"
