@@ -1,10 +1,12 @@
 use embedded_graphics::prelude::{IntoStorage, RgbColor};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 
+mod app;
 mod audio;
 mod network;
 mod protocol;
 mod ui;
+mod ws;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -48,7 +50,7 @@ fn main() -> anyhow::Result<()> {
         _ => {
             gui.state = "http://192.168.71.1".to_string();
             gui.text = format!(
-                "Please connect to wifi {}.\n\nOpen URL: http://192.168.71.1",
+                "Please connect to wifi {}.\nOpen URL: http://192.168.71.1",
                 network::SSID,
             );
             gui.display_flush().unwrap();

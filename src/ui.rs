@@ -236,8 +236,8 @@ impl UI {
             let textbox_style = embedded_text::style::TextBoxStyleBuilder::new()
                 .height_mode(embedded_text::style::HeightMode::FitToText)
                 .alignment(embedded_text::alignment::HorizontalAlignment::Center)
-                .line_height(embedded_graphics::text::LineHeight::Pixels(20))
-                .paragraph_spacing(20)
+                .line_height(embedded_graphics::text::LineHeight::Pixels(10))
+                .paragraph_spacing(10)
                 .build();
             let text_box = TextBox::with_textbox_style(
                 &self.text,

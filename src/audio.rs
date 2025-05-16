@@ -257,87 +257,12 @@ async fn i2s_test_1(
     // Ok(())
 }
 
-pub async fn i2s_test() -> anyhow::Result<()> {
-    // let (afe_handle, afe_data) = unsafe { afe_init() };
-
-    // let timer = esp_idf_svc::timer::EspTimerService::new()?;
-    log::info!("PORT_TICK_PERIOD_MS = {}", PORT_TICK_PERIOD_MS);
-    let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take().unwrap();
-    let i2s_config = config::StdConfig::new(
-        config::Config::default().auto_clear(true),
-        config::StdClkConfig::from_sample_rate_hz(SAMPLE_RATE),
-        config::StdSlotConfig::philips_slot_default(
-            config::DataBitWidth::Bits16,
-            config::SlotMode::Mono,
-        ),
-        config::StdGpioConfig::default(),
-    );
-
-    let bclk = peripherals.pins.gpio21;
-    let din = peripherals.pins.gpio47;
-    let dout = peripherals.pins.gpio14;
-    let ws = peripherals.pins.gpio13;
-
-    let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
-
-    let afe_handle = AFE::new();
-
-    let mut driver =
-        I2sDriver::new_std_bidir(peripherals.i2s0, &i2s_config, bclk, din, dout, mclk, ws).unwrap();
-    driver.tx_enable()?;
-    driver.rx_enable()?;
-
-    // let (mut rx, mut tx) = driver.split();
-
-    let mut buf = [0u8; 2 * 160];
-    let mut send_buf = vec![];
-
-    driver.write_all_async(&WAKE_WAV).await?;
-
-    let mut speech = false;
-
-    'a: loop {
-        let n = driver.read_async(&mut buf).await?;
-        log::info!("Read {} bytes", n);
-
-        let i2s_chunk = &buf[..n];
-        {
-            let n = afe_handle.feed(i2s_chunk);
-            log::info!("Feed: {}", n);
-            if n == 0 {
-                loop {
-                    let result = afe_handle.fetch();
-                    if let Err(e) = &result {
-                        log::error!("Error fetching: {}", *e);
-                        break;
-                    }
-                    let result = result.unwrap();
-                    log::info!("Result: {}", result.data.len());
-                    // log::info!("VAD state: {}", vad_state);
-                    // log::info!("VAD cache: {:?}", result.vad_cache_size);
-                    if result.data.is_empty() {
-                        break;
-                    }
-
-                    if result.speech {
-                        speech = true;
-                        send_buf.extend_from_slice(&result.data);
-                        continue;
-                    }
-
-                    if speech {
-                        log::info!("Sending {} bytes", send_buf.len());
-                        driver.write_all_async(&send_buf).await?;
-                        send_buf.clear();
-                        speech = false;
-                        // skip = 10;
-                        continue 'a;
-                    }
-                }
-                let n = afe_handle.feed(i2s_chunk);
-            }
-        }
-    }
-
-    // Ok(())
+pub async fn player_hello<'d>(
+    driver: &mut I2sDriver<'d, esp_idf_svc::hal::i2s::I2sTx>,
+) -> anyhow::Result<()> {
+    driver
+        .write_all_async(WAKE_WAV)
+        .await
+        .map_err(|e| anyhow::anyhow!("Error writing audio: {:?}", e))?;
+    Ok(())
 }
