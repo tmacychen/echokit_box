@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::gpio::IOPin};
+use esp_idf_svc::eventloop::EspSystemEventLoop;
 
 mod app;
 mod audio;
@@ -108,13 +106,21 @@ fn main() -> anyhow::Result<()> {
     let dout = peripherals.pins.gpio14;
     let ws = peripherals.pins.gpio13;
 
+    let (audio_dev, chan) = audio::new_audio_chan();
+
     let i2s_task = audio::i2s_task(
         peripherals.i2s0,
         bclk.into(),
         din.into(),
         dout.into(),
         ws.into(),
+        chan,
     );
+
+    let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(10);
+    let ex_evt_tx = evt_tx.clone();
+
+    let ws_task = app::app_run(server_url, audio_dev, evt_rx, nvs);
 
     // Configures the button
     let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
@@ -127,14 +133,56 @@ fn main() -> anyhow::Result<()> {
 
     b.spawn(async move {
         loop {
-            let _ = button.wait_for_rising_edge().await;
+            let _ = button.wait_for_falling_edge().await;
             log::info!("Button k0 pressed {:?}", button.get_level());
+            if evt_tx
+                .send(app::Event::Event(app::Event::K0))
+                .await
+                .is_err()
+            {
+                log::error!("Failed to send K0 event");
+                break;
+            }
         }
     });
     b.spawn(async move {
         loop {
-            let _ = ex_button.wait_for_rising_edge().await;
+            let _ = ex_button.wait_for_falling_edge().await;
             log::info!("Button ex_key pressed {:?}", ex_button.get_level());
+            let r = unsafe { esp_idf_svc::sys::hal_driver::xl9555_key_scan(0) } as u32;
+            match r {
+                esp_idf_svc::sys::hal_driver::KEY0_PRES => {
+                    log::info!("KEY1_PRES");
+                    if ex_evt_tx
+                        .send(app::Event::Event(app::Event::K1))
+                        .await
+                        .is_err()
+                    {
+                        log::error!("Failed to send K1 event");
+                        break;
+                    }
+                }
+                esp_idf_svc::sys::hal_driver::KEY1_PRES => {
+                    log::info!("KEY2_PRES");
+                    if ex_evt_tx
+                        .send(app::Event::Event(app::Event::K2))
+                        .await
+                        .is_err()
+                    {
+                        log::error!("Failed to send K2 event");
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    b.spawn(async move {
+        let r = ws_task.await;
+        if let Err(e) = r {
+            log::error!("Error: {:?}", e);
+        } else {
+            log::info!("WebSocket task finished successfully");
         }
     });
     b.block_on(async {

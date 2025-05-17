@@ -1,12 +1,10 @@
-use esp_idf_svc::hal::{
-    gpio::AnyIOPin,
-    i2s::{I2s, I2sDriver},
-    peripheral::Peripheral,
-};
 use tokio::sync::mpsc;
 use tokio_websockets::Message;
 
-use crate::{audio, ws::Server};
+use crate::{
+    audio::{self, AudioData},
+    ws::Server,
+};
 
 #[derive(Debug)]
 pub enum Event {
@@ -27,6 +25,16 @@ impl Event {
     pub const NOISE: &'static str = "noise";
     pub const RESET: &'static str = "reset";
     pub const UNKNOWN: &'static str = "unknown";
+    pub const K0: &'static str = "k0";
+    pub const K1: &'static str = "k1";
+    pub const K2: &'static str = "k2";
+}
+
+pub fn clear_nvs(nvs: &mut esp_idf_svc::nvs::EspDefaultNvs) -> anyhow::Result<()> {
+    nvs.remove("ssid")?;
+    nvs.remove("pass")?;
+    nvs.remove("server_url")?;
+    Ok(())
 }
 
 async fn submit_chat(
@@ -105,16 +113,9 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
     }
 }
 
-pub enum AudioData {
-    Hello(tokio::sync::oneshot::Sender<()>),
-    Start,
-    Chunk(Vec<u8>),
-    End(tokio::sync::oneshot::Sender<()>),
-}
-
 pub async fn main_work<'d>(
     mut server: Server,
-    player_tx: mpsc::Sender<AudioData>,
+    player_tx: audio::PlayerTx,
     mic_tx: mpsc::UnboundedSender<mpsc::Sender<Vec<u8>>>,
     mut evt_rx: mpsc::Receiver<Event>,
     mut nvs: esp_idf_svc::nvs::EspDefaultNvs,
@@ -138,7 +139,6 @@ pub async fn main_work<'d>(
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 player_tx
                     .send(AudioData::Hello(tx))
-                    .await
                     .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
 
                 let _ = rx.await;
@@ -148,7 +148,6 @@ pub async fn main_work<'d>(
                 }
                 player_tx
                     .send(AudioData::Start)
-                    .await
                     .map_err(|e| anyhow::anyhow!("Error sending start: {e:?}"))?;
             }
             Event::Event(Event::RESET) if idle => {
@@ -196,7 +195,7 @@ pub async fn main_work<'d>(
             }
             Event::AudioChunk(data) => {
                 log::info!("Received audio chunk");
-                if let Err(e) = player_tx.send(AudioData::Chunk(data.to_vec())).await {
+                if let Err(e) = player_tx.send(AudioData::Chunk(data.to_vec())) {
                     log::error!("Error sending audio chunk: {:?}", e);
                     gui.state = "Error on audio chunk".to_string();
                     gui.display_flush().unwrap();
@@ -206,7 +205,7 @@ pub async fn main_work<'d>(
                 log::info!("Received audio end");
                 gui.state = "Pause".to_string();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                if let Err(e) = player_tx.send(AudioData::End(tx)).await {
+                if let Err(e) = player_tx.send(AudioData::End(tx)) {
                     log::error!("Error sending audio chunk: {:?}", e);
                     gui.state = "Error on audio chunk".to_string();
                     gui.display_flush().unwrap();
@@ -228,67 +227,36 @@ pub async fn main_work<'d>(
     Ok(())
 }
 
-pub async fn app_run<I2S: I2s>(
+pub async fn app_run(
     server_url: String,
-    i2s: impl Peripheral<P = I2S> + 'static,
-    bck: AnyIOPin,
-    lclk: AnyIOPin,
-    dout: AnyIOPin,
-    mic_tx: mpsc::UnboundedSender<mpsc::Sender<Vec<u8>>>,
+    (tx, mut audio_rx): (audio::PlayerTx, audio::MicRx),
     evt_rx: mpsc::Receiver<Event>,
     nvs: esp_idf_svc::nvs::EspDefaultNvs,
 ) -> anyhow::Result<()> {
-    use esp_idf_svc::hal::i2s::config;
-    let i2s_config = config::StdConfig::new(
-        config::Config::default().auto_clear(true),
-        config::StdClkConfig::from_sample_rate_hz(32000),
-        config::StdSlotConfig::philips_slot_default(
-            config::DataBitWidth::Bits16,
-            config::SlotMode::Mono,
-        ),
-        config::StdGpioConfig::default(),
-    );
-
-    let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
-    let mut driver = I2sDriver::new_std_tx(i2s, &i2s_config, bck, dout, mclk, lclk)?;
-    driver.tx_enable()?;
-
+    // let server_url = "ws://192.168.1.28:8080/ws/2".to_string();
     let server = crate::ws::Server::new(server_url).await?;
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<AudioData>(3);
-    let _r: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-        let mut driver = driver;
-        let mut wait_start = false;
-        while let Some(data) = rx.recv().await {
-            match data {
-                AudioData::Hello(tx) => {
-                    log::info!("Received hello");
-                    audio::player_hello(&mut driver)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
-                    let _ = tx.send(());
-                    wait_start = true;
+    let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<mpsc::Sender<Vec<u8>>>();
+    tokio::spawn(async move {
+        loop {
+            let res = tokio::select! {
+                Some(audio) = audio_rx.recv() => {
+                    Err(audio)
+                },
+                Some(mic) = mic_rx.recv() => {
+                    Ok(mic)
                 }
-                AudioData::Start => {
-                    log::info!("Received start");
-                    wait_start = false;
-                }
-                AudioData::Chunk(data) => {
-                    log::info!("Received audio chunk");
-                    if !wait_start {
-                        driver
-                            .write_all_async(&data)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Error play audio data: {:?}", e))?;
+            };
+            if let Ok(tx) = res {
+                if let Some(data) = audio_rx.recv().await {
+                    let r = tx.send(data).await;
+                    if r.is_err() {
+                        log::warn!("Skip audio");
                     }
-                }
-                AudioData::End(tx) => {
-                    log::info!("Received end");
-                    let _ = tx.send(());
-                }
+                } else {
+                    break;
+                };
             }
         }
-        Ok(())
     });
 
     main_work(server, tx, mic_tx, evt_rx, nvs).await

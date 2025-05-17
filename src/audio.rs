@@ -135,12 +135,36 @@ impl AFE {
 
 pub static WAKE_WAV: &[u8] = include_bytes!("../assets/hello.wav");
 
-pub async fn i2s_task(i2s: I2S0, bclk: AnyIOPin, din: AnyIOPin, dout: AnyIOPin, ws: AnyIOPin) {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+pub enum AudioData {
+    Hello(tokio::sync::oneshot::Sender<()>),
+    Start,
+    Chunk(Vec<u8>),
+    End(tokio::sync::oneshot::Sender<()>),
+}
+
+pub fn new_audio_chan() -> ((PlayerTx, MicRx), (MicTx, PlayerRx)) {
+    let (tx0, rx0) = tokio::sync::mpsc::unbounded_channel();
+    let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
+    ((tx1, rx0), (tx0, rx1))
+}
+
+pub type PlayerTx = tokio::sync::mpsc::UnboundedSender<AudioData>;
+pub type PlayerRx = tokio::sync::mpsc::UnboundedReceiver<AudioData>;
+pub type MicTx = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
+pub type MicRx = tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>;
+
+pub async fn i2s_task(
+    i2s: I2S0,
+    bclk: AnyIOPin,
+    din: AnyIOPin,
+    dout: AnyIOPin,
+    ws: AnyIOPin,
+    (tx, rx): (MicTx, PlayerRx),
+) {
     let afe_handle = Arc::new(AFE::new());
     let afe_handle_ = afe_handle.clone();
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
-    let r = i2s_test_1(i2s, bclk, din, dout, ws, afe_handle, rx).await;
+    let r = i2s_player(i2s, bclk, din, dout, ws, afe_handle, rx).await;
     if let Err(e) = r {
         log::error!("Error: {}", e);
     } else {
@@ -166,22 +190,13 @@ fn afe_worker(
             continue;
         }
         let result = result.unwrap();
-        // log::info!("Result: {}", result.data.len());
-        // log::info!("VAD state: {}", vad_state);
-        // log::info!("VAD cache: {:?}", result.vad_cache_size);
         if result.data.is_empty() {
-            break;
+            continue;
         }
 
         if result.speech {
             speech = true;
             send_buf.extend_from_slice(&result.data);
-            // if send_buf.len() > SAMPLE_RATE as usize / 10 {
-            //     log::info!("Sending {} bytes", send_buf.len());
-            //     tx.send(send_buf)
-            //         .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
-            //     send_buf = vec![]
-            // }
             continue;
         }
 
@@ -193,17 +208,16 @@ fn afe_worker(
             speech = false;
         }
     }
-    Ok(())
 }
 
-async fn i2s_test_1(
+async fn i2s_player(
     i2s: I2S0,
     bclk: AnyIOPin,
     din: AnyIOPin,
     dout: AnyIOPin,
     ws: AnyIOPin,
     afe_handle: Arc<AFE>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    mut rx: PlayerRx,
 ) -> anyhow::Result<()> {
     log::info!("PORT_TICK_PERIOD_MS = {}", PORT_TICK_PERIOD_MS);
     let i2s_config = config::StdConfig::new(
@@ -223,32 +237,54 @@ async fn i2s_test_1(
     driver.rx_enable()?;
 
     let mut buf = [0u8; 2 * 160];
+    let mut wait_start = false;
 
     driver.write_all_async(&WAKE_WAV).await?;
 
     loop {
-        tokio::select! {
+        let data = tokio::select! {
             Some(data) = rx.recv() =>{
-                log::info!("Send {} bytes", data.len());
-                driver.write_all_async(&data).await?;
+                Some(data)
             }
             _ = async {} => {
                 let n = driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
-                let n = afe_handle.feed(&buf[..n]);
+                afe_handle.feed(&buf[..n]);
+                None
             }
+        };
+        if let Some(data) = data {
+            match data {
+                AudioData::Hello(tx) => {
+                    log::info!("Received hello");
+                    driver
+                        .write_all_async(&WAKE_WAV)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Error play hello: {:?}", e))?;
+                    let _ = tx.send(());
+                    wait_start = true;
+                }
+                AudioData::Start => {
+                    log::info!("Received start");
+                    wait_start = false;
+                }
+                AudioData::Chunk(data) => {
+                    log::info!("Received audio chunk");
+                    if !wait_start {
+                        driver
+                            .write_all_async(&data)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("Error play audio data: {:?}", e))?;
+                    }
+                }
+                AudioData::End(tx) => {
+                    log::info!("Received end");
+                    let _ = tx.send(());
+                }
+            }
+        } else {
+            tokio::task::yield_now().await;
         }
-        tokio::task::yield_now().await;
     }
 
     // Ok(())
-}
-
-pub async fn player_hello<'d>(
-    driver: &mut I2sDriver<'d, esp_idf_svc::hal::i2s::I2sTx>,
-) -> anyhow::Result<()> {
-    driver
-        .write_all_async(WAKE_WAV)
-        .await
-        .map_err(|e| anyhow::anyhow!("Error writing audio: {:?}", e))?;
-    Ok(())
 }
