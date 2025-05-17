@@ -2,7 +2,7 @@ use embedded_graphics::{
     framebuffer::{buffer_size, Framebuffer},
     image::GetPixel,
     pixelcolor::{
-        raw::{BigEndian, LittleEndian, RawU16},
+        raw::{LittleEndian, RawU16},
         Rgb565,
     },
     prelude::*,
@@ -263,14 +263,6 @@ impl UI {
         }
 
         for i in 0..5 {
-            // let e = crate::lcd::flush_display(
-            //     self.display.data(),
-            //     0,
-            //     0,
-            //     DISPLAY_WIDTH as _,
-            //     DISPLAY_HEIGHT as _,
-            // );
-
             let e = flush_area::<COLOR_WIDTH>(
                 self.display.data(),
                 self.display.size(),

@@ -236,6 +236,7 @@ pub async fn app_run(
     // let server_url = "ws://192.168.1.28:8080/ws/2".to_string();
     let server = crate::ws::Server::new(server_url).await?;
     let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<mpsc::Sender<Vec<u8>>>();
+
     tokio::spawn(async move {
         loop {
             let res = tokio::select! {
@@ -247,14 +248,24 @@ pub async fn app_run(
                 }
             };
             if let Ok(tx) = res {
-                if let Some(data) = audio_rx.recv().await {
-                    let r = tx.send(data).await;
-                    if r.is_err() {
-                        log::warn!("Skip audio");
+                let next_audio =
+                    tokio::time::timeout(std::time::Duration::from_secs(30), audio_rx.recv()).await;
+                match next_audio {
+                    Ok(Some(data)) => {
+                        let r = tx.send(data).await;
+                        if r.is_err() {
+                            log::warn!("Skip audio");
+                        }
                     }
-                } else {
-                    break;
-                };
+                    Ok(None) => {
+                        log::error!("Audio channel closed");
+                        break;
+                    }
+                    Err(_) => {
+                        log::warn!("Timeout waiting for audio");
+                        continue;
+                    }
+                }
             }
         }
     });

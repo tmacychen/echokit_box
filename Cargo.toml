@@ -53,6 +53,7 @@ futures-sink = "0.3.31"
 tokio = { version = "1.43.0", features = [
     "net",
     "rt",
+    "time",
     "io-std",
     "io-util",
     "macros",
