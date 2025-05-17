@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use esp_idf_svc::hal::gpio::AnyIOPin;
-use esp_idf_svc::hal::i2s::{config, I2s, I2sDriver, I2sRx, I2S0};
+use esp_idf_svc::hal::i2s::{config, I2sDriver, I2S0};
 
 use esp_idf_svc::sys::esp_sr;
 
@@ -15,7 +15,7 @@ pub fn audio_init() {
         hal_driver::xl9555_init();
         hal_driver::es8311_init(SAMPLE_RATE as i32);
         hal_driver::xl9555_pin_write(hal_driver::SPK_CTRL_IO as _, 1);
-        hal_driver::es8311_set_voice_volume(65); /* 设置喇叭音量，建议不超过65 */
+        hal_driver::es8311_set_voice_volume(75); /* 设置喇叭音量，建议不超过65 */
         hal_driver::es8311_set_voice_mute(0); /* 打开DAC */
     }
 }
@@ -29,7 +29,7 @@ unsafe fn afe_init() -> (
         "M\0".as_ptr() as _,
         models,
         esp_sr::afe_type_t_AFE_TYPE_VC,
-        esp_sr::afe_mode_t_AFE_MODE_LOW_COST,
+        esp_sr::afe_mode_t_AFE_MODE_HIGH_PERF,
     );
     let afe_config = afe_config.as_mut().unwrap();
     afe_config.pcm_config.total_ch_num = 1;
@@ -135,12 +135,6 @@ impl AFE {
 
 pub static WAKE_WAV: &[u8] = include_bytes!("../assets/hello.wav");
 
-struct DriverI2sRx<'d>(esp_idf_svc::hal::i2s::I2sDriverRef<'d, I2sRx>);
-struct DriverI2sTx<'d>(esp_idf_svc::hal::i2s::I2sDriverRef<'d, I2sRx>);
-
-unsafe impl Send for DriverI2sRx<'_> {}
-unsafe impl Send for DriverI2sTx<'_> {}
-
 pub async fn i2s_task(i2s: I2S0, bclk: AnyIOPin, din: AnyIOPin, dout: AnyIOPin, ws: AnyIOPin) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let afe_handle = Arc::new(AFE::new());
@@ -168,7 +162,7 @@ fn afe_worker(
     let mut send_buf = vec![];
     loop {
         let result = afe_handle.fetch();
-        if let Err(e) = &result {
+        if let Err(_e) = &result {
             continue;
         }
         let result = result.unwrap();
@@ -211,7 +205,6 @@ async fn i2s_test_1(
     afe_handle: Arc<AFE>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
 ) -> anyhow::Result<()> {
-    // let timer = esp_idf_svc::timer::EspTimerService::new()?;
     log::info!("PORT_TICK_PERIOD_MS = {}", PORT_TICK_PERIOD_MS);
     let i2s_config = config::StdConfig::new(
         config::Config::default().auto_clear(true),
@@ -223,35 +216,28 @@ async fn i2s_test_1(
         config::StdGpioConfig::default(),
     );
 
-    // let bclk = peripherals.pins.gpio21;
-    // let din = peripherals.pins.gpio47;
-    // let dout = peripherals.pins.gpio14;
-    // let ws = peripherals.pins.gpio13;
-
     let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
 
     let mut driver = I2sDriver::new_std_bidir(i2s, &i2s_config, bclk, din, dout, mclk, ws).unwrap();
     driver.tx_enable()?;
     driver.rx_enable()?;
 
-    // let (mut rx, mut tx) = driver.split();
-
     let mut buf = [0u8; 2 * 160];
 
     driver.write_all_async(&WAKE_WAV).await?;
 
     loop {
-        match rx.try_recv() {
-            Ok(data) => {
+        tokio::select! {
+            Some(data) = rx.recv() =>{
                 log::info!("Send {} bytes", data.len());
                 driver.write_all_async(&data).await?;
-                afe_handle.reset();
             }
-            _ => {
+            _ = async {} => {
                 let n = driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
                 let n = afe_handle.feed(&buf[..n]);
             }
         }
+        tokio::task::yield_now().await;
     }
 
     // Ok(())
