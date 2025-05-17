@@ -148,7 +148,6 @@ fn main() -> anyhow::Result<()> {
     b.spawn(async move {
         loop {
             let _ = ex_button.wait_for_falling_edge().await;
-            log::info!("Button ex_key pressed {:?}", ex_button.get_level());
             let r = unsafe { esp_idf_svc::sys::hal_driver::xl9555_key_scan(0) } as u32;
             match r {
                 esp_idf_svc::sys::hal_driver::KEY0_PRES => {

@@ -128,7 +128,7 @@ pub async fn main_work<'d>(
 
     while let Some(evt) = select_evt(&mut evt_rx, &mut server).await {
         match evt {
-            Event::Event(Event::GAIA) => {
+            Event::Event(Event::GAIA | Event::K0) => {
                 log::info!("Received event: gaia");
                 gui.state = "gaia".to_string();
                 gui.display_flush().unwrap();
@@ -150,12 +150,12 @@ pub async fn main_work<'d>(
                     .send(AudioData::Start)
                     .map_err(|e| anyhow::anyhow!("Error sending start: {e:?}"))?;
             }
-            Event::Event(Event::RESET) if idle => {
+            Event::Event(Event::RESET | Event::K2) if idle => {
                 log::info!("Received reset");
                 gui.reset = true;
                 gui.display_flush().unwrap();
             }
-            Event::Event(Event::YES) if gui.reset => {
+            Event::Event(Event::YES | Event::K1) if gui.reset => {
                 log::info!("Received yes");
                 gui.display_flush().unwrap();
                 nvs.remove("ssid")?;
@@ -163,7 +163,7 @@ pub async fn main_work<'d>(
                 nvs.remove("server_url")?;
                 unsafe { esp_idf_svc::sys::esp_restart() };
             }
-            Event::Event(Event::NO) if gui.reset => {
+            Event::Event(Event::NO | Event::K2) if gui.reset => {
                 log::info!("Received no");
                 gui.reset = false;
                 gui.display_flush().unwrap();
