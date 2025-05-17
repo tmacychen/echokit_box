@@ -1,5 +1,6 @@
-use embedded_graphics::prelude::{IntoStorage, RgbColor};
-use esp_idf_svc::eventloop::EspSystemEventLoop;
+use std::sync::Arc;
+
+use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::gpio::IOPin};
 
 mod app;
 mod audio;
@@ -98,23 +99,47 @@ fn main() -> anyhow::Result<()> {
         log::info!("Display flushed successfully");
     }
 
+    let b = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
     let bclk = peripherals.pins.gpio21;
     let din = peripherals.pins.gpio47;
     let dout = peripherals.pins.gpio14;
     let ws = peripherals.pins.gpio13;
 
-    esp_idf_svc::hal::task::block_on(audio::i2s_task(
+    let i2s_task = audio::i2s_task(
         peripherals.i2s0,
         bclk.into(),
         din.into(),
         dout.into(),
         ws.into(),
-    ));
-    // if let Err(e) = r {
-    //     log::error!("Error: {}", e);
-    // } else {
-    //     log::info!("I2S test completed successfully");
-    // }
+    );
+
+    // Configures the button
+    let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
+    button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
+    button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::PosEdge)?;
+
+    let mut ex_button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio3)?;
+    ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
+    ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
+
+    b.spawn(async move {
+        loop {
+            let _ = button.wait_for_rising_edge().await;
+            log::info!("Button k0 pressed {:?}", button.get_level());
+        }
+    });
+    b.spawn(async move {
+        loop {
+            let _ = ex_button.wait_for_rising_edge().await;
+            log::info!("Button ex_key pressed {:?}", ex_button.get_level());
+        }
+    });
+    b.block_on(async {
+        i2s_task.await;
+    });
     Ok(())
 }
 
