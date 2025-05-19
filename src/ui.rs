@@ -7,7 +7,10 @@ use embedded_graphics::{
     },
     prelude::*,
     primitives::{PrimitiveStyleBuilder, Rectangle},
-    text::{Alignment, Text},
+    text::{
+        renderer::{CharacterStyle, TextRenderer},
+        Alignment, Text,
+    },
 };
 use embedded_text::TextBox;
 use u8g2_fonts::U8g2TextStyle;
@@ -74,6 +77,82 @@ pub fn backgroud() -> Result<(), std::convert::Infallible> {
 }
 
 const ALPHA: f32 = 0.5;
+
+// TextRenderer + CharacterStyle
+#[derive(Debug, Clone)]
+struct MyTextStyle(U8g2TextStyle<ColorFormat>, i32);
+
+impl TextRenderer for MyTextStyle {
+    type Color = ColorFormat;
+
+    fn draw_string<D>(
+        &self,
+        text: &str,
+        mut position: Point,
+        baseline: embedded_graphics::text::Baseline,
+        target: &mut D,
+    ) -> Result<Point, D::Error>
+    where
+        D: DrawTarget<Color = Self::Color>,
+    {
+        position.y += self.1;
+        self.0.draw_string(text, position, baseline, target)
+    }
+
+    fn draw_whitespace<D>(
+        &self,
+        width: u32,
+        mut position: Point,
+        baseline: embedded_graphics::text::Baseline,
+        target: &mut D,
+    ) -> Result<Point, D::Error>
+    where
+        D: DrawTarget<Color = Self::Color>,
+    {
+        position.y += self.1;
+        self.0.draw_whitespace(width, position, baseline, target)
+    }
+
+    fn measure_string(
+        &self,
+        text: &str,
+        mut position: Point,
+        baseline: embedded_graphics::text::Baseline,
+    ) -> embedded_graphics::text::renderer::TextMetrics {
+        position.y += self.1;
+        self.0.measure_string(text, position, baseline)
+    }
+
+    fn line_height(&self) -> u32 {
+        self.0.line_height()
+    }
+}
+
+impl CharacterStyle for MyTextStyle {
+    type Color = ColorFormat;
+
+    fn set_text_color(&mut self, text_color: Option<Self::Color>) {
+        self.0.set_text_color(text_color);
+    }
+
+    fn set_background_color(&mut self, background_color: Option<Self::Color>) {
+        self.0.set_background_color(background_color);
+    }
+
+    fn set_underline_color(
+        &mut self,
+        underline_color: embedded_graphics::text::DecorationColor<Self::Color>,
+    ) {
+        self.0.set_underline_color(underline_color);
+    }
+
+    fn set_strikethrough_color(
+        &mut self,
+        strikethrough_color: embedded_graphics::text::DecorationColor<Self::Color>,
+    ) {
+        self.0.set_strikethrough_color(strikethrough_color);
+    }
+}
 
 pub struct UI {
     pub state: String,
@@ -236,15 +315,18 @@ impl UI {
             let textbox_style = embedded_text::style::TextBoxStyleBuilder::new()
                 .height_mode(embedded_text::style::HeightMode::FitToText)
                 .alignment(embedded_text::alignment::HorizontalAlignment::Center)
-                .line_height(embedded_graphics::text::LineHeight::Pixels(10))
-                .paragraph_spacing(10)
+                .line_height(embedded_graphics::text::LineHeight::Percent(120))
+                .paragraph_spacing(16)
                 .build();
             let text_box = TextBox::with_textbox_style(
                 &self.text,
                 self.text_area,
-                U8g2TextStyle::new(
-                    u8g2_fonts::fonts::u8g2_font_wqy16_t_gb2312,
-                    ColorFormat::CSS_WHEAT,
+                MyTextStyle(
+                    U8g2TextStyle::new(
+                        u8g2_fonts::fonts::u8g2_font_wqy16_t_gb2312,
+                        ColorFormat::CSS_WHEAT,
+                    ),
+                    3,
                 ),
                 textbox_style,
             );
