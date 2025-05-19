@@ -40,6 +40,15 @@ fn main() -> anyhow::Result<()> {
 
     let _ = ui::backgroud();
 
+    // Configures the button
+    let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
+    button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
+    button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::PosEdge)?;
+
+    let mut ex_button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio3)?;
+    ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
+    ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
+
     let mut gui = ui::UI::default();
 
     let (ssid, pass, server_url) = match (ssid, pass, server_url) {
@@ -70,26 +79,32 @@ fn main() -> anyhow::Result<()> {
     gui.text.clear();
     gui.display_flush().unwrap();
 
-    let _wifi = network::wifi(&ssid, &pass, peripherals.modem, sysloop);
-    if _wifi.is_err() {
-        for i in 0..3 {
-            let i = 3 - i;
-            gui.state = format!("Failed to connect to wifi [{ssid}]");
-            gui.text = format!("Reset device in {i} seconds...");
-            gui.display_flush().unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-
-        nvs.remove("ssid")?;
-        nvs.remove("pass")?;
-        nvs.remove("server_url")?;
-
-        unsafe { esp_idf_svc::sys::esp_restart() }
-    }
-
     let b = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
+
+    let mut _wifi = network::wifi(&ssid, &pass, peripherals.modem, sysloop);
+    if _wifi.is_err() {
+        b.block_on(async {
+            for i in 0..30 {
+                let i = 30 - i;
+                gui.state = format!("Failed to connect to wifi [{ssid}]");
+                gui.text = format!("Restart device in {i} seconds...\nIf you want to reset the device,\nyou can press K0");
+                gui.display_flush().unwrap();
+                let r = tokio::time::timeout(std::time::Duration::from_secs(1), button.wait_for_falling_edge()).await;
+                match r {
+                    Ok(evt) => {
+                        if evt.is_ok(){
+                            app::clear_nvs(&mut nvs).unwrap();
+                            break;
+                        }
+                    },
+                    Err(_) =>{},
+                }
+            }
+        });
+        unsafe { esp_idf_svc::sys::esp_restart() }
+    }
 
     let bclk = peripherals.pins.gpio21;
     let din = peripherals.pins.gpio47;
@@ -107,19 +122,35 @@ fn main() -> anyhow::Result<()> {
         chan,
     );
 
+    let server = b.block_on(ws::Server::new(server_url.clone()));
+    if server.is_err() {
+        b.block_on(async {
+            for i in 0..10 {
+                let i = 10 - i;
+                gui.state = format!("Failed to connect to server");
+                gui.text = format!("Restart device in {i} seconds...\nIf you want to reset the device,\nyou can press K0");
+                gui.display_flush().unwrap();
+                let r = tokio::time::timeout(std::time::Duration::from_secs(1), button.wait_for_falling_edge()).await;
+                match r {
+                    Ok(evt) => {
+                        if evt.is_ok(){
+                            app::clear_nvs(&mut nvs).unwrap();
+                            break;
+                        }
+                    },
+                    Err(_) =>{},
+                }
+            }
+        });
+        unsafe { esp_idf_svc::sys::esp_restart() }
+    }
+
+    let server = server.unwrap();
+
     let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(10);
     let ex_evt_tx = evt_tx.clone();
 
-    let ws_task = app::app_run(server_url, audio_dev, evt_rx, nvs);
-
-    // Configures the button
-    let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
-    button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
-    button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::PosEdge)?;
-
-    let mut ex_button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio3)?;
-    ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
-    ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
+    let ws_task = app::app_run(server, audio_dev, evt_rx, nvs);
 
     b.spawn(async move {
         loop {
@@ -166,7 +197,8 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
-    b.spawn(async move {
+    b.spawn(i2s_task);
+    b.block_on(async move {
         let r = ws_task.await;
         if let Err(e) = r {
             log::error!("Error: {:?}", e);
@@ -174,10 +206,8 @@ fn main() -> anyhow::Result<()> {
             log::info!("WebSocket task finished successfully");
         }
     });
-    b.block_on(async {
-        i2s_task.await;
-    });
-    Ok(())
+    log::error!("WebSocket task finished");
+    unsafe { esp_idf_svc::sys::esp_restart() }
 }
 
 pub fn log_heap() {

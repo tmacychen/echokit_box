@@ -6,11 +6,12 @@ fn print_stack_high() {
 }
 
 use crate::{app::Event, protocol::JsonCommand};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use tokio_websockets::Message;
 
 pub struct Server {
     pub uri: String,
+    timeout: std::time::Duration,
     ws: tokio_websockets::WebSocketStream<tokio_websockets::MaybeTlsStream<tokio::net::TcpStream>>,
 }
 
@@ -21,11 +22,19 @@ impl Server {
             .connect()
             .await?;
 
-        Ok(Self { uri, ws })
+        let timeout = std::time::Duration::from_secs(30);
+
+        Ok(Self { uri, timeout, ws })
+    }
+
+    pub fn set_timeout(&mut self, timeout: std::time::Duration) {
+        self.timeout = timeout;
     }
 
     pub async fn send(&mut self, msg: Message) -> anyhow::Result<()> {
-        self.ws.send(msg).await?;
+        tokio::time::timeout(self.timeout, self.ws.send(msg))
+            .map_err(|_| anyhow::anyhow!("Timeout sending message"))
+            .await??;
         Ok(())
     }
 

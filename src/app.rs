@@ -58,9 +58,9 @@ async fn submit_chat(
 
     let mut n = 0;
     while let Some(data) = rx.recv().await {
-        server
-            .send(Message::binary(bytes::Bytes::from(data)))
-            .await?;
+        let r = server.send(Message::binary(bytes::Bytes::from(data))).await;
+        log::info!("Sending data: {:?}", r);
+        r?;
         n += 1;
     }
     if n > 0 {
@@ -226,13 +226,12 @@ pub async fn main_work<'d>(
 }
 
 pub async fn app_run(
-    server_url: String,
+    server: crate::ws::Server,
     (tx, mut audio_rx): (audio::PlayerTx, audio::MicRx),
     evt_rx: mpsc::Receiver<Event>,
     nvs: esp_idf_svc::nvs::EspDefaultNvs,
 ) -> anyhow::Result<()> {
     // let server_url = "ws://192.168.1.28:8080/ws/2".to_string();
-    let server = crate::ws::Server::new(server_url).await?;
     let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<mpsc::Sender<Vec<u8>>>();
 
     tokio::spawn(async move {
