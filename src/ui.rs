@@ -333,7 +333,7 @@ impl UI {
             text_box.draw(self.display.as_mut())?;
         } else {
             Text::with_alignment(
-                &format!("Do you want to reset the device?\n[yes] or [no]"),
+                &format!("Do you want to reset the device?\n[yes(K1)] or [no(K2)]"),
                 self.text_area.center(),
                 U8g2TextStyle::new(
                     u8g2_fonts::fonts::u8g2_font_unifont_t_gb2312b,
