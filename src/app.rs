@@ -158,9 +158,7 @@ pub async fn main_work<'d>(
             Event::Event(Event::YES | Event::K1) if gui.reset => {
                 log::info!("Received yes");
                 gui.display_flush().unwrap();
-                nvs.remove("ssid")?;
-                nvs.remove("pass")?;
-                nvs.remove("server_url")?;
+                clear_nvs(&mut nvs).unwrap();
                 unsafe { esp_idf_svc::sys::esp_restart() };
             }
             Event::Event(Event::NO | Event::K2) if gui.reset => {

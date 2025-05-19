@@ -87,16 +87,6 @@ fn main() -> anyhow::Result<()> {
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
-    let mut gui = ui::UI::default();
-    gui.state = "Connecting".to_string();
-    gui.text = "Connecting to WiFi...".to_string();
-    let r = gui.display_flush();
-    if let Err(e) = r {
-        log::error!("Error: {}", e);
-    } else {
-        log::info!("Display flushed successfully");
-    }
-
     let b = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
