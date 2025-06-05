@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     log::info!("PASS: {:?}", pass);
     log::info!("Server URL: {:?}", server_url);
 
-    let _ = ui::backgroud();
+    // let _ = ui::backgroud();
 
     // Configures the button
     let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
     ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
     ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
 
-    let mut gui = ui::UI::default();
+    let mut gui = ui::UI::new(None).unwrap();
 
     let (ssid, pass, mut server_url) = match (ssid, pass, server_url) {
         (Some(ssid), Some(pass), Some(server_url)) => {

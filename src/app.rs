@@ -95,10 +95,19 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
             Some(evt)
         }
         Ok(msg) = server.recv() => {
-            if matches!(msg, Event::ServerEvent(ServerEvent::AudioChunk { .. })) {
-                log::info!("Received AudioChunk");
-            }else{
-                log::info!("Received message: {:?}", msg);
+            match msg {
+                Event::ServerEvent(ServerEvent::AudioChunk { .. })=>{
+                    log::info!("Received AudioChunk");
+                }
+                Event::ServerEvent(ServerEvent::HelloChunk { .. })=>{
+                    log::info!("Received HelloChunk");
+                }
+                Event::ServerEvent(ServerEvent::BGChunk { .. })=>{
+                    log::info!("Received BGChunk");
+                }
+                _=> {
+                    log::info!("Received message: {:?}", msg);
+                }
             }
             Some(msg)
         }
@@ -121,6 +130,8 @@ pub async fn main_work<'d>(
 
     gui.state = "Connected to server".to_string();
     gui.display_flush().unwrap();
+
+    let mut new_gui_bg = vec![];
 
     while let Some(evt) = select_evt(&mut evt_rx, &mut server).await {
         match evt {
@@ -212,6 +223,60 @@ pub async fn main_work<'d>(
                 log::info!("Received request end");
                 if submit_chat(&mut gui, &mut server, &mic_tx).await? == 0 {
                     idle = true;
+                }
+            }
+            Event::ServerEvent(ServerEvent::HelloStart) => {
+                if let Err(_) = player_tx.send(AudioData::SetHelloStart) {
+                    log::error!("Error sending hello start");
+                    gui.state = "Error on hello start".to_string();
+                    gui.display_flush().unwrap();
+                }
+            }
+            Event::ServerEvent(ServerEvent::HelloChunk { data }) => {
+                log::info!("Received hello chunk");
+                if let Err(_) = player_tx.send(AudioData::SetHelloChunk(data.to_vec())) {
+                    log::error!("Error sending hello chunk");
+                    gui.state = "Error on hello chunk".to_string();
+                    gui.display_flush().unwrap();
+                }
+            }
+            Event::ServerEvent(ServerEvent::HelloEnd) => {
+                log::info!("Received hello end");
+                if let Err(_) = player_tx.send(AudioData::SetHelloEnd) {
+                    log::error!("Error sending hello end");
+                    gui.state = "Error on hello end".to_string();
+                    gui.display_flush().unwrap();
+                } else {
+                    gui.state = "Hello set".to_string();
+                    gui.display_flush().unwrap();
+                }
+            }
+            Event::ServerEvent(ServerEvent::BGStart) => {
+                new_gui_bg = vec![];
+            }
+            Event::ServerEvent(ServerEvent::BGChunk { data }) => {
+                log::info!("Received background chunk");
+                new_gui_bg.extend(data);
+            }
+            Event::ServerEvent(ServerEvent::BGEnd) => {
+                log::info!("Received background end");
+                if !new_gui_bg.is_empty() {
+                    let gui_ = crate::ui::UI::new(Some(&new_gui_bg));
+                    new_gui_bg.clear();
+                    match gui_ {
+                        Ok(new_gui) => {
+                            gui = new_gui;
+                            gui.state = "Background data loaded".to_string();
+                            gui.display_flush().unwrap();
+                        }
+                        Err(e) => {
+                            log::error!("Error creating GUI from background data: {:?}", e);
+                            gui.state = "Error on background data".to_string();
+                            gui.display_flush().unwrap();
+                        }
+                    }
+                } else {
+                    log::warn!("Received empty background data");
                 }
             }
             Event::ServerEvent(ServerEvent::StartVideo | ServerEvent::EndVideo) => {}

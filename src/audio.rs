@@ -137,6 +137,9 @@ pub static WAKE_WAV: &[u8] = include_bytes!("../assets/hello.wav");
 
 pub enum AudioData {
     Hello(tokio::sync::oneshot::Sender<()>),
+    SetHelloStart,
+    SetHelloChunk(Vec<u8>),
+    SetHelloEnd,
     Start,
     Chunk(Vec<u8>),
     End(tokio::sync::oneshot::Sender<()>),
@@ -239,7 +242,9 @@ async fn i2s_player(
     let mut buf = [0u8; 2 * 160];
     let mut wait_start = false;
 
-    driver.write_all_async(&WAKE_WAV).await?;
+    let mut hello_audio = WAKE_WAV.to_vec();
+
+    driver.write_all_async(&hello_audio).await?;
 
     loop {
         let data = tokio::select! {
@@ -257,11 +262,26 @@ async fn i2s_player(
                 AudioData::Hello(tx) => {
                     log::info!("Received hello");
                     driver
-                        .write_all_async(&WAKE_WAV)
+                        .write_all_async(&hello_audio)
                         .await
                         .map_err(|e| anyhow::anyhow!("Error play hello: {:?}", e))?;
                     let _ = tx.send(());
                     wait_start = true;
+                }
+                AudioData::SetHelloStart => {
+                    log::info!("Received set hello start");
+                    hello_audio.clear();
+                }
+                AudioData::SetHelloChunk(data) => {
+                    log::info!("Received set hello chunk");
+                    hello_audio.extend(data);
+                }
+                AudioData::SetHelloEnd => {
+                    log::info!("Received set hello end");
+                    driver
+                        .write_all_async(&hello_audio)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Error play set hello: {:?}", e))?;
                 }
                 AudioData::Start => {
                     log::info!("Received start");

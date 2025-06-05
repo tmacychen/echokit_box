@@ -290,6 +290,85 @@ fn flush_area<const COLOR_WIDTH: u32>(data: &[u8], size: Size, area: Rectangle) 
 }
 
 impl UI {
+    pub fn new(backgroud_gif: Option<&[u8]>) -> anyhow::Result<Self> {
+        let mut display = Box::new(Framebuffer::<
+            ColorFormat,
+            _,
+            LittleEndian,
+            DISPLAY_WIDTH,
+            DISPLAY_HEIGHT,
+            { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
+        >::new());
+
+        display.clear(ColorFormat::WHITE).unwrap();
+
+        let state_area = Rectangle::new(
+            display.bounding_box().top_left + Point::new(0, 0),
+            Size::new(DISPLAY_WIDTH as u32, 32),
+        );
+        let text_area = Rectangle::new(
+            display.bounding_box().top_left + Point::new(0, 32),
+            Size::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32 - 32),
+        );
+
+        if let Some(gif) = backgroud_gif {
+            let image = tinygif::Gif::<ColorFormat>::from_slice(gif)
+                .map_err(|e| anyhow::anyhow!("Failed to parse GIF: {:?}", e))?;
+            for frame in image.frames() {
+                frame.draw(display.as_mut()).unwrap();
+            }
+        }
+
+        let img = display.as_image();
+
+        let state_pixels: Vec<Pixel<ColorFormat>> = state_area
+            .into_styled(
+                PrimitiveStyleBuilder::new()
+                    .stroke_color(ColorFormat::CSS_DARK_BLUE)
+                    .stroke_width(1)
+                    .fill_color(ColorFormat::CSS_DARK_BLUE)
+                    .build(),
+            )
+            .pixels()
+            .map(|p| {
+                if let Some(color) = img.pixel(p.0) {
+                    Pixel(p.0, alpha_mix(color, p.1, ALPHA))
+                } else {
+                    p
+                }
+            })
+            .collect();
+
+        let box_pixels: Vec<Pixel<ColorFormat>> = text_area
+            .into_styled(
+                PrimitiveStyleBuilder::new()
+                    .stroke_color(ColorFormat::CSS_BLACK)
+                    .stroke_width(5)
+                    .fill_color(ColorFormat::CSS_BLACK)
+                    .build(),
+            )
+            .pixels()
+            .map(|p| {
+                if let Some(color) = img.pixel(p.0) {
+                    Pixel(p.0, alpha_mix(color, p.1, ALPHA))
+                } else {
+                    p
+                }
+            })
+            .collect();
+
+        Ok(Self {
+            state: String::new(),
+            state_background: state_pixels,
+            text: String::new(),
+            text_background: box_pixels,
+            reset: false,
+            display,
+            state_area,
+            text_area,
+        })
+    }
+
     pub fn display_flush(&mut self) -> anyhow::Result<()> {
         self.state_background
             .iter()
