@@ -5,7 +5,7 @@ fn print_stack_high() {
     log::info!("Stack high: {}", stack_high);
 }
 
-use crate::{app::Event, protocol::JsonCommand};
+use crate::{app::Event, protocol::ServerEvent};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use tokio_websockets::Message;
 
@@ -44,24 +44,12 @@ impl Server {
             .next()
             .await
             .ok_or_else(|| anyhow::anyhow!("WS channel closed"))??;
-        if let Some(text) = msg.as_text() {
-            if let Ok(cmd) = serde_json::from_str::<JsonCommand>(text) {
-                match cmd {
-                    JsonCommand::Action { action } => Ok(Event::Action(action)),
-                    JsonCommand::StartAudio { text } => Ok(Event::AudioStart(text)),
-                    JsonCommand::EndAudio => Ok(Event::AudioEnd),
-                    JsonCommand::ASR { text } => Ok(Event::Asr(text)),
-                    JsonCommand::EndResponse => Ok(Event::RequestEnd(0, String::new())),
-                    _ => Err(anyhow::anyhow!("Invalid command: {:?}", text)),
-                }
-            } else {
-                log::warn!("Invalid command: {:?}", text);
-                Err(anyhow::anyhow!("Invalid command: {:?}", text))
-            }
-        } else if msg.is_binary() {
+
+        if msg.is_binary() {
             let payload = msg.into_payload();
-            log::info!("Received binary data");
-            Ok(Event::AudioChunk(payload))
+            let evt = rmp_serde::from_slice::<ServerEvent>(&payload)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize binary data: {}", e))?;
+            Ok(Event::ServerEvent(evt))
         } else {
             Err(anyhow::anyhow!("Invalid message type"))
         }

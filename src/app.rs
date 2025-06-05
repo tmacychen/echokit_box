@@ -3,18 +3,14 @@ use tokio_websockets::Message;
 
 use crate::{
     audio::{self, AudioData},
+    protocol::ServerEvent,
     ws::Server,
 };
 
 #[derive(Debug)]
 pub enum Event {
     Event(&'static str),
-    Asr(String),
-    Action(String),
-    AudioStart(String),
-    AudioChunk(tokio_websockets::Payload),
-    AudioEnd,
-    RequestEnd(u16, String),
+    ServerEvent(ServerEvent),
 }
 
 #[allow(dead_code)]
@@ -72,7 +68,7 @@ async fn submit_chat(
 
         while let Ok(evt) = server.recv().await {
             match evt {
-                Event::Asr(text) => {
+                Event::ServerEvent(ServerEvent::ASR { text }) => {
                     log::info!("Received ASR: {:?}", text);
                     gui.state = "ASR".to_string();
                     gui.text = text.trim().to_string();
@@ -99,7 +95,7 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
             Some(evt)
         }
         Ok(msg) = server.recv() => {
-            if matches!(msg, Event::AudioChunk(..)) {
+            if matches!(msg, Event::ServerEvent(ServerEvent::AudioChunk { .. })) {
                 log::info!("Received AudioChunk");
             }else{
                 log::info!("Received message: {:?}", msg);
@@ -174,24 +170,24 @@ pub async fn main_work<'d>(
                     gui.display_flush().unwrap();
                 }
             }
-            Event::Asr(text) => {
+            Event::ServerEvent(ServerEvent::ASR { text }) => {
                 log::info!("Received ASR: {:?}", text);
                 gui.state = "ASR".to_string();
                 gui.text = text.trim().to_string();
                 gui.display_flush().unwrap();
             }
-            Event::Action(action) => {
+            Event::ServerEvent(ServerEvent::Action { action }) => {
                 log::info!("Received action");
                 gui.state = format!("Action: {}", action);
                 gui.display_flush().unwrap();
             }
-            Event::AudioStart(text) => {
+            Event::ServerEvent(ServerEvent::StartAudio { text }) => {
                 log::info!("Received audio start: {:?}", text);
                 gui.state = "Speaking...".to_string();
                 gui.text = text.trim().to_string();
                 gui.display_flush().unwrap();
             }
-            Event::AudioChunk(data) => {
+            Event::ServerEvent(ServerEvent::AudioChunk { data }) => {
                 log::info!("Received audio chunk");
                 if let Err(e) = player_tx.send(AudioData::Chunk(data.to_vec())) {
                     log::error!("Error sending audio chunk: {:?}", e);
@@ -199,7 +195,7 @@ pub async fn main_work<'d>(
                     gui.display_flush().unwrap();
                 }
             }
-            Event::AudioEnd => {
+            Event::ServerEvent(ServerEvent::EndAudio) => {
                 log::info!("Received audio end");
                 gui.state = "Pause".to_string();
                 let (tx, rx) = tokio::sync::oneshot::channel();
@@ -211,12 +207,14 @@ pub async fn main_work<'d>(
                 let _ = rx.await;
                 gui.display_flush().unwrap();
             }
-            Event::RequestEnd(code, msg) => {
-                log::info!("Received request end: {} {}", code, msg);
+
+            Event::ServerEvent(ServerEvent::EndResponse) => {
+                log::info!("Received request end");
                 if submit_chat(&mut gui, &mut server, &mic_tx).await? == 0 {
                     idle = true;
                 }
             }
+            Event::ServerEvent(ServerEvent::StartVideo | ServerEvent::EndVideo) => {}
         }
     }
 
