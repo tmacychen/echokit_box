@@ -51,7 +51,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut gui = ui::UI::default();
 
-    let (ssid, pass, server_url) = match (ssid, pass, server_url) {
+    let (ssid, pass, mut server_url) = match (ssid, pass, server_url) {
         (Some(ssid), Some(pass), Some(server_url)) => {
             (ssid.to_string(), pass.to_string(), server_url.to_string())
         }
@@ -106,6 +106,18 @@ fn main() -> anyhow::Result<()> {
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
+    let wifi = _wifi.unwrap();
+    let mac = wifi.ap_netif().get_mac().unwrap();
+    let mac_str = format!(
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    );
+
+    if !server_url.ends_with("/") {
+        server_url.push('/');
+    }
+    server_url.push_str(&mac_str);
+
     let bclk = peripherals.pins.gpio21;
     let din = peripherals.pins.gpio47;
     let dout = peripherals.pins.gpio14;
@@ -122,7 +134,7 @@ fn main() -> anyhow::Result<()> {
         chan,
     );
 
-    let server = b.block_on(ws::Server::new(server_url.clone()));
+    let server = b.block_on(ws::Server::new(server_url));
     if server.is_err() {
         b.block_on(async {
             for i in 0..10 {
