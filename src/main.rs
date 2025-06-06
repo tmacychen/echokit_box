@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 
 mod app;
@@ -7,6 +9,160 @@ mod protocol;
 mod ui;
 mod ws;
 
+#[derive(Debug, Clone)]
+struct Setting {
+    ssid: String,
+    pass: String,
+    server_url: String,
+}
+
+mod bt {
+    use std::sync::{Arc, Mutex};
+
+    use esp32_nimble::{utilities::BleUuid, uuid128, BLEAdvertisementData, NimbleProperties};
+
+    const SERVICE_ID: BleUuid = uuid128!("623fa3e2-631b-4f8f-a6e7-a7b09c03e7e0");
+    const SSID_ID: BleUuid = uuid128!("1fda4d6e-2f14-42b0-96fa-453bed238375");
+    const PASS_ID: BleUuid = uuid128!("a987ab18-a940-421a-a1d7-b94ee22bccbe");
+    const SERVER_URL_ID: BleUuid = uuid128!("cef520a9-bcb5-4fc6-87f7-82804eee2b20");
+
+    pub fn bt(
+        setting: Arc<Mutex<(super::Setting, esp_idf_svc::nvs::EspDefaultNvs)>>,
+    ) -> anyhow::Result<()> {
+        let ble_device = esp32_nimble::BLEDevice::take();
+        let ble_addr = ble_device.get_addr()?.to_string();
+        let ble_advertising = ble_device.get_advertising();
+
+        let server = ble_device.get_server();
+        server.on_connect(|server, desc| {
+            log::info!("Client connected: {:?}", desc);
+
+            server
+                .update_conn_params(desc.conn_handle(), 24, 48, 0, 60)
+                .unwrap();
+
+            if server.connected_count() < (esp_idf_svc::sys::CONFIG_BT_NIMBLE_MAX_CONNECTIONS as _)
+            {
+                log::info!("Multi-connect support: start advertising");
+                ble_advertising.lock().start().unwrap();
+            }
+        });
+
+        server.on_disconnect(|_desc, reason| {
+            log::info!("Client disconnected ({:?})", reason);
+        });
+
+        let service = server.create_service(SERVICE_ID);
+
+        let setting1 = setting.clone();
+        let setting2 = setting.clone();
+
+        let ssid_characteristic = service
+            .lock()
+            .create_characteristic(SSID_ID, NimbleProperties::READ | NimbleProperties::WRITE);
+        ssid_characteristic
+            .lock()
+            .on_read(move |c, _| {
+                log::info!("Read from SSID characteristic");
+                let setting = setting1.lock().unwrap();
+                c.set_value(setting.0.ssid.as_bytes());
+            })
+            .on_write(move |args| {
+                log::info!(
+                    "Wrote to SSID characteristic: {:?} -> {:?}",
+                    args.current_data(),
+                    args.recv_data()
+                );
+                if let Ok(new_ssid) = String::from_utf8(args.recv_data().to_vec()) {
+                    log::info!("New SSID: {}", new_ssid);
+                    let mut setting = setting2.lock().unwrap();
+                    if let Err(e) = setting.1.set_str("ssid", &new_ssid) {
+                        log::error!("Failed to save SSID to NVS: {:?}", e);
+                    } else {
+                        setting.0.ssid = new_ssid;
+                    }
+                } else {
+                    log::error!("Failed to parse new SSID from bytes.");
+                }
+            });
+
+        let setting1 = setting.clone();
+        let setting2 = setting.clone();
+        let pass_characteristic = service
+            .lock()
+            .create_characteristic(PASS_ID, NimbleProperties::READ | NimbleProperties::WRITE);
+        pass_characteristic
+            .lock()
+            .on_read(move |c, _| {
+                log::info!("Read from pass characteristic");
+                let setting = setting1.lock().unwrap();
+                c.set_value(setting.0.pass.as_bytes());
+            })
+            .on_write(move |args| {
+                log::info!(
+                    "Wrote to pass characteristic: {:?} -> {:?}",
+                    args.current_data(),
+                    args.recv_data()
+                );
+                if let Ok(new_pass) = String::from_utf8(args.recv_data().to_vec()) {
+                    log::info!("New pass: {}", new_pass);
+                    let mut setting = setting2.lock().unwrap();
+                    if let Err(e) = setting.1.set_str("pass", &new_pass) {
+                        log::error!("Failed to save pass to NVS: {:?}", e);
+                    } else {
+                        setting.0.pass = new_pass;
+                    }
+                } else {
+                    log::error!("Failed to parse new pass from bytes.");
+                }
+            });
+
+        let setting = setting.clone();
+        let setting_ = setting.clone();
+
+        let server_url_characteristic = service.lock().create_characteristic(
+            SERVER_URL_ID,
+            NimbleProperties::READ | NimbleProperties::WRITE,
+        );
+        server_url_characteristic
+            .lock()
+            .on_read(move |c, _| {
+                log::info!("Read from server URL characteristic");
+                let setting = setting.lock().unwrap();
+                c.set_value(setting.0.server_url.as_bytes());
+            })
+            .on_write(move |args| {
+                log::info!(
+                    "Wrote to server URL characteristic: {:?} -> {:?}",
+                    args.current_data(),
+                    args.recv_data()
+                );
+                if let Ok(mut new_server_url) = String::from_utf8(args.recv_data().to_vec()) {
+                    log::info!("New server URL: {}", new_server_url);
+                    if !new_server_url.ends_with("/") {
+                        new_server_url.push('/');
+                    }
+                    let mut setting = setting_.lock().unwrap();
+                    if let Err(e) = setting.1.set_str("server_url", &new_server_url) {
+                        log::error!("Failed to save server URL to NVS: {:?}", e);
+                    } else {
+                        setting.0.server_url = new_server_url;
+                    }
+                } else {
+                    log::error!("Failed to parse new server URL from bytes.");
+                }
+            });
+
+        ble_advertising.lock().set_data(
+            BLEAdvertisementData::new()
+                .name(&format!("GAIA-ESP32-{}", ble_addr))
+                .add_service_uuid(SERVICE_ID),
+        )?;
+        ble_advertising.lock().start()?;
+        Ok(())
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -14,7 +170,7 @@ fn main() -> anyhow::Result<()> {
     let sysloop = EspSystemEventLoop::take()?;
     let _fs = esp_idf_svc::io::vfs::MountedEventfs::mount(20)?;
     let partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take()?;
-    let mut nvs = esp_idf_svc::nvs::EspDefaultNvs::new(partition, "setting", true)?;
+    let nvs = esp_idf_svc::nvs::EspDefaultNvs::new(partition, "setting", true)?;
 
     audio::audio_init();
     ui::lcd_init();
@@ -22,17 +178,23 @@ fn main() -> anyhow::Result<()> {
     let mut ssid_buf = [0; 32];
     let ssid = nvs
         .get_str("ssid", &mut ssid_buf)
-        .map_err(|_| anyhow::anyhow!("Failed to get ssid"))?;
+        .map_err(|e| log::error!("Failed to get ssid: {:?}", e))
+        .ok()
+        .flatten();
 
     let mut pass_buf = [0; 64];
     let pass = nvs
         .get_str("pass", &mut pass_buf)
-        .map_err(|_| anyhow::anyhow!("Failed to get pass"))?;
+        .map_err(|e| log::error!("Failed to get pass: {:?}", e))
+        .ok()
+        .flatten();
 
     let mut server_url = [0; 128];
     let server_url = nvs
         .get_str("server_url", &mut server_url)
-        .map_err(|_| anyhow::anyhow!("Failed to get server_url"))?;
+        .map_err(|e| log::error!("Failed to get server_url: {:?}", e))
+        .ok()
+        .flatten();
 
     log::info!("SSID: {:?}", ssid);
     log::info!("PASS: {:?}", pass);
@@ -49,74 +211,68 @@ fn main() -> anyhow::Result<()> {
     ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
     ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
 
+    let b = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
     let mut gui = ui::UI::new(None).unwrap();
 
-    let (ssid, pass, mut server_url) = match (ssid, pass, server_url) {
-        (Some(ssid), Some(pass), Some(server_url)) => {
-            (ssid.to_string(), pass.to_string(), server_url.to_string())
-        }
-        _ => {
-            gui.state = "http://192.168.71.1".to_string();
-            gui.text = format!(
-                "Please connect to wifi {}.\nOpen URL: http://192.168.71.1",
-                network::SSID,
-            );
+    let setting = Arc::new(Mutex::new((
+        Setting {
+            ssid: ssid.unwrap_or_default().to_string(),
+            pass: pass.unwrap_or_default().to_string(),
+            server_url: server_url.unwrap_or_default().to_string(),
+        },
+        nvs,
+    )));
+
+    bt::bt(setting.clone()).unwrap();
+
+    loop {
+        let need_init = {
+            let setting = setting.lock().unwrap();
+            setting.0.ssid.is_empty()
+                || setting.0.pass.is_empty()
+                || setting.0.server_url.is_empty()
+        };
+        if need_init {
+            gui.state = "Please setup device by bt".to_string();
+            gui.text = "Press K0 to continue".to_string();
             gui.display_flush().unwrap();
-
-            let from_data = network::wifi_http_server(peripherals.modem, sysloop.clone())?;
-            log::info!("GET SSID: {:?}", from_data.wifi_username);
-            log::info!("GET PASS: {:?}", from_data.wifi_password);
-            log::info!("GET Server URL: {:?}", from_data.server_url);
-            nvs.set_str("ssid", &from_data.wifi_username)?;
-            nvs.set_str("pass", &from_data.wifi_password)?;
-            nvs.set_str("server_url", &from_data.server_url)?;
-
-            unsafe { esp_idf_svc::sys::esp_restart() }
+            b.block_on(button.wait_for_falling_edge()).unwrap();
+        } else {
+            break;
         }
-    };
+    }
 
     gui.state = "Connecting to wifi...".to_string();
     gui.text.clear();
     gui.display_flush().unwrap();
 
-    let b = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-
-    let mut _wifi = network::wifi(&ssid, &pass, peripherals.modem, sysloop);
+    let _wifi = {
+        let setting = setting.lock().unwrap();
+        network::wifi(
+            &setting.0.ssid,
+            &setting.0.pass,
+            peripherals.modem,
+            sysloop.clone(),
+        )
+    };
     if _wifi.is_err() {
-        b.block_on(async {
-            for i in 0..30 {
-                let i = 30 - i;
-                gui.state = format!("Failed to connect to wifi [{ssid}]");
-                gui.text = format!("Restart device in {i} seconds...\nIf you want to reset the device,\nyou can press K0");
-                gui.display_flush().unwrap();
-                let r = tokio::time::timeout(std::time::Duration::from_secs(1), button.wait_for_falling_edge()).await;
-                match r {
-                    Ok(evt) => {
-                        if evt.is_ok(){
-                            app::clear_nvs(&mut nvs).unwrap();
-                            break;
-                        }
-                    },
-                    Err(_) =>{},
-                }
-            }
-        });
+        gui.state = "Failed to connect to wifi".to_string();
+        gui.text = "Press K0 to restart".to_string();
+        gui.display_flush().unwrap();
+        b.block_on(button.wait_for_falling_edge()).unwrap();
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
     let wifi = _wifi.unwrap();
+
     let mac = wifi.ap_netif().get_mac().unwrap();
     let mac_str = format!(
         "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     );
-
-    if !server_url.ends_with("/") {
-        server_url.push('/');
-    }
-    server_url.push_str(&mac_str);
 
     let bclk = peripherals.pins.gpio21;
     let din = peripherals.pins.gpio47;
@@ -134,26 +290,20 @@ fn main() -> anyhow::Result<()> {
         chan,
     );
 
-    let server = b.block_on(ws::Server::new(server_url));
+    gui.state = "Connecting to server...".to_string();
+    gui.text.clear();
+    gui.display_flush().unwrap();
+
+    let server_url = {
+        let setting = setting.lock().unwrap();
+        format!("{}{}", setting.0.server_url, mac_str)
+    };
+    let server = b.block_on(ws::Server::new(server_url.clone()));
     if server.is_err() {
-        b.block_on(async {
-            for i in 0..10 {
-                let i = 10 - i;
-                gui.state = format!("Failed to connect to server");
-                gui.text = format!("Restart device in {i} seconds...\nIf you want to reset the device,\nyou can press K0");
-                gui.display_flush().unwrap();
-                let r = tokio::time::timeout(std::time::Duration::from_secs(1), button.wait_for_falling_edge()).await;
-                match r {
-                    Ok(evt) => {
-                        if evt.is_ok(){
-                            app::clear_nvs(&mut nvs).unwrap();
-                            break;
-                        }
-                    },
-                    Err(_) =>{},
-                }
-            }
-        });
+        gui.state = "Failed to connect to server".to_string();
+        gui.text = format!("Please check your server URL: {server_url}");
+        gui.display_flush().unwrap();
+        b.block_on(button.wait_for_falling_edge()).unwrap();
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
@@ -162,7 +312,7 @@ fn main() -> anyhow::Result<()> {
     let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(10);
     let ex_evt_tx = evt_tx.clone();
 
-    let ws_task = app::app_run(server, audio_dev, evt_rx, nvs);
+    let ws_task = app::app_run(server, audio_dev, evt_rx);
 
     b.spawn(async move {
         loop {

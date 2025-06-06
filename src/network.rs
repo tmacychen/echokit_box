@@ -25,33 +25,7 @@ pub fn wifi(
 
     let mut wifi = BlockingWifi::wrap(&mut esp_wifi, sysloop)?;
 
-    wifi.set_configuration(&esp_idf_svc::wifi::Configuration::Client(
-        esp_idf_svc::wifi::ClientConfiguration::default(),
-    ))?;
-
-    info!("Starting wifi...");
-
     wifi.start()?;
-
-    info!("Scanning...");
-
-    let ap_infos = wifi.scan()?;
-
-    let ours = ap_infos.into_iter().find(|a| a.ssid == ssid);
-
-    let channel = if let Some(ours) = ours {
-        info!(
-            "Found configured access point {} on channel {}",
-            ssid, ours.channel
-        );
-        Some(ours.channel)
-    } else {
-        info!(
-            "Configured access point {} not found during scanning, will go with unknown channel",
-            ssid
-        );
-        None
-    };
 
     wifi.set_configuration(&esp_idf_svc::wifi::Configuration::Client(
         esp_idf_svc::wifi::ClientConfiguration {
@@ -61,7 +35,6 @@ pub fn wifi(
             password: pass
                 .try_into()
                 .expect("Could not parse the given password into WiFi config"),
-            channel,
             auth_method,
             ..Default::default()
         },

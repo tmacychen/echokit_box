@@ -123,7 +123,6 @@ pub async fn main_work<'d>(
     player_tx: audio::PlayerTx,
     mic_tx: mpsc::UnboundedSender<mpsc::Sender<Vec<u8>>>,
     mut evt_rx: mpsc::Receiver<Event>,
-    mut nvs: esp_idf_svc::nvs::EspDefaultNvs,
 ) -> anyhow::Result<()> {
     let mut gui = crate::ui::UI::default();
     let mut idle = true;
@@ -153,6 +152,7 @@ pub async fn main_work<'d>(
                 if submit_chat(&mut gui, &mut server, &mic_tx).await? == 0 {
                     idle = _idle;
                 }
+                log::info!("submit_chat done, idle: {}", idle);
                 player_tx
                     .send(AudioData::Start)
                     .map_err(|e| anyhow::anyhow!("Error sending start: {e:?}"))?;
@@ -163,10 +163,10 @@ pub async fn main_work<'d>(
                 gui.display_flush().unwrap();
             }
             Event::Event(Event::YES | Event::K1) if gui.reset => {
-                log::info!("Received yes");
-                gui.display_flush().unwrap();
-                clear_nvs(&mut nvs).unwrap();
-                unsafe { esp_idf_svc::sys::esp_restart() };
+                // log::info!("Received yes");
+                // gui.display_flush().unwrap();
+                // clear_nvs(&mut nvs).unwrap();
+                // unsafe { esp_idf_svc::sys::esp_restart() };
             }
             Event::Event(Event::NO | Event::K2) if gui.reset => {
                 log::info!("Received no");
@@ -224,6 +224,7 @@ pub async fn main_work<'d>(
                 if submit_chat(&mut gui, &mut server, &mic_tx).await? == 0 {
                     idle = true;
                 }
+                log::info!("submit_chat done, idle: {}", idle);
             }
             Event::ServerEvent(ServerEvent::HelloStart) => {
                 if let Err(_) = player_tx.send(AudioData::SetHelloStart) {
@@ -292,7 +293,6 @@ pub async fn app_run(
     server: crate::ws::Server,
     (tx, mut audio_rx): (audio::PlayerTx, audio::MicRx),
     evt_rx: mpsc::Receiver<Event>,
-    nvs: esp_idf_svc::nvs::EspDefaultNvs,
 ) -> anyhow::Result<()> {
     // let server_url = "ws://192.168.1.28:8080/ws/2".to_string();
     let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<mpsc::Sender<Vec<u8>>>();
@@ -330,5 +330,5 @@ pub async fn app_run(
         }
     });
 
-    main_work(server, tx, mic_tx, evt_rx, nvs).await
+    main_work(server, tx, mic_tx, evt_rx).await
 }
