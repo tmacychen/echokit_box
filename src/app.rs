@@ -26,13 +26,6 @@ impl Event {
     pub const K2: &'static str = "k2";
 }
 
-pub fn clear_nvs(nvs: &mut esp_idf_svc::nvs::EspDefaultNvs) -> anyhow::Result<()> {
-    nvs.remove("ssid")?;
-    nvs.remove("pass")?;
-    nvs.remove("server_url")?;
-    Ok(())
-}
-
 async fn submit_chat(
     gui: &mut crate::ui::UI,
     server: &mut Server,
