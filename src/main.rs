@@ -279,7 +279,8 @@ fn main() -> anyhow::Result<()> {
     let dout = peripherals.pins.gpio14;
     let ws = peripherals.pins.gpio13;
 
-    let (audio_dev, chan) = audio::new_audio_chan();
+    let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(64);
+    let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
 
     let i2s_task = audio::i2s_task(
         peripherals.i2s0,
@@ -287,7 +288,7 @@ fn main() -> anyhow::Result<()> {
         din.into(),
         dout.into(),
         ws.into(),
-        chan,
+        (evt_tx.clone(), rx1),
     );
 
     gui.state = "Connecting to server...".to_string();
@@ -309,10 +310,9 @@ fn main() -> anyhow::Result<()> {
 
     let server = server.unwrap();
 
-    let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(10);
     let ex_evt_tx = evt_tx.clone();
 
-    let ws_task = app::app_run(server, audio_dev, evt_rx);
+    let ws_task = app::main_work(server, tx1, evt_rx);
 
     b.spawn(async move {
         loop {

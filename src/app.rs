@@ -11,6 +11,8 @@ use crate::{
 pub enum Event {
     Event(&'static str),
     ServerEvent(ServerEvent),
+    MicAudioChunk(Vec<u8>),
+    MicAudioEnd,
 }
 
 #[allow(dead_code)]
@@ -58,19 +60,6 @@ async fn submit_chat(
         gui.reset = false;
         gui.display_flush().unwrap();
         log::info!("Wait...");
-
-        while let Ok(evt) = server.recv().await {
-            match evt {
-                Event::ServerEvent(ServerEvent::ASR { text }) => {
-                    log::info!("Received ASR: {:?}", text);
-                    gui.state = "ASR".to_string();
-                    gui.text = text.trim().to_string();
-                    gui.display_flush().unwrap();
-                    break;
-                }
-                _ => {}
-            }
-        }
     } else {
         gui.state = "IDLE".to_string();
         gui.reset = false;
@@ -84,7 +73,20 @@ async fn submit_chat(
 async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> Option<Event> {
     tokio::select! {
         Some(evt) = evt_rx.recv() => {
-            log::info!("Received event: {:?}", evt);
+            match &evt {
+                Event::Event(_)=>{
+                    log::info!("Received event: {:?}", evt);
+                },
+                Event::MicAudioEnd=>{
+                    log::info!("Received MicAudioEnd");
+                },
+                Event::MicAudioChunk(data)=>{
+                    log::info!("Received MicAudioChunk with {} bytes", data.len());
+                },
+                Event::ServerEvent(_)=>{
+                    log::info!("Received ServerEvent: {:?}", evt);
+                },
+            }
             Some(evt)
         }
         Ok(msg) = server.recv() => {
@@ -114,7 +116,6 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
 pub async fn main_work<'d>(
     mut server: Server,
     player_tx: audio::PlayerTx,
-    mic_tx: mpsc::UnboundedSender<mpsc::Sender<Vec<u8>>>,
     mut evt_rx: mpsc::Receiver<Event>,
 ) -> anyhow::Result<()> {
     let mut gui = crate::ui::UI::default();
@@ -132,7 +133,6 @@ pub async fn main_work<'d>(
                 gui.state = "gaia".to_string();
                 gui.display_flush().unwrap();
 
-                let _idle = idle;
                 idle = false;
 
                 let (tx, rx) = tokio::sync::oneshot::channel();
@@ -141,14 +141,6 @@ pub async fn main_work<'d>(
                     .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
 
                 let _ = rx.await;
-
-                if submit_chat(&mut gui, &mut server, &mic_tx).await? == 0 {
-                    idle = _idle;
-                }
-                log::info!("submit_chat done, idle: {}", idle);
-                player_tx
-                    .send(AudioData::Start)
-                    .map_err(|e| anyhow::anyhow!("Error sending start: {e:?}"))?;
             }
             Event::Event(Event::RESET | Event::K2) if idle => {
                 log::info!("Received reset");
@@ -174,6 +166,20 @@ pub async fn main_work<'d>(
                     gui.display_flush().unwrap();
                 }
             }
+            Event::MicAudioChunk(data) => {
+                if gui.state != "Listening..." {
+                    gui.state = "Listening...".to_string();
+                    gui.reset = false;
+                    gui.display_flush().unwrap();
+                }
+
+                server
+                    .send(Message::binary(bytes::Bytes::from(data)))
+                    .await?;
+            }
+            Event::MicAudioEnd => {
+                server.send(Message::text("End:Normal")).await?;
+            }
             Event::ServerEvent(ServerEvent::ASR { text }) => {
                 log::info!("Received ASR: {:?}", text);
                 gui.state = "ASR".to_string();
@@ -190,6 +196,10 @@ pub async fn main_work<'d>(
                 gui.state = "Speaking...".to_string();
                 gui.text = text.trim().to_string();
                 gui.display_flush().unwrap();
+                log::info!("submit_chat done, idle: {}", idle);
+                player_tx
+                    .send(AudioData::Start)
+                    .map_err(|e| anyhow::anyhow!("Error sending start: {e:?}"))?;
             }
             Event::ServerEvent(ServerEvent::AudioChunk { data }) => {
                 log::info!("Received audio chunk");
@@ -214,9 +224,6 @@ pub async fn main_work<'d>(
 
             Event::ServerEvent(ServerEvent::EndResponse) => {
                 log::info!("Received request end");
-                if submit_chat(&mut gui, &mut server, &mic_tx).await? == 0 {
-                    idle = true;
-                }
                 log::info!("submit_chat done, idle: {}", idle);
             }
             Event::ServerEvent(ServerEvent::HelloStart) => {
@@ -280,48 +287,4 @@ pub async fn main_work<'d>(
     log::info!("Main work done");
 
     Ok(())
-}
-
-pub async fn app_run(
-    server: crate::ws::Server,
-    (tx, mut audio_rx): (audio::PlayerTx, audio::MicRx),
-    evt_rx: mpsc::Receiver<Event>,
-) -> anyhow::Result<()> {
-    // let server_url = "ws://192.168.1.28:8080/ws/2".to_string();
-    let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<mpsc::Sender<Vec<u8>>>();
-
-    tokio::spawn(async move {
-        loop {
-            let res = tokio::select! {
-                Some(audio) = audio_rx.recv() => {
-                    Err(audio)
-                },
-                Some(mic) = mic_rx.recv() => {
-                    Ok(mic)
-                }
-            };
-            if let Ok(tx) = res {
-                let next_audio =
-                    tokio::time::timeout(std::time::Duration::from_secs(30), audio_rx.recv()).await;
-                match next_audio {
-                    Ok(Some(data)) => {
-                        let r = tx.send(data).await;
-                        if r.is_err() {
-                            log::warn!("Skip audio");
-                        }
-                    }
-                    Ok(None) => {
-                        log::error!("Audio channel closed");
-                        break;
-                    }
-                    Err(_) => {
-                        log::warn!("Timeout waiting for audio");
-                        continue;
-                    }
-                }
-            }
-        }
-    });
-
-    main_work(server, tx, mic_tx, evt_rx).await
 }

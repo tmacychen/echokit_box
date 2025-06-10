@@ -37,7 +37,8 @@ unsafe fn afe_init() -> (
     afe_config.pcm_config.ref_num = 0;
     afe_config.pcm_config.sample_rate = 16000;
     afe_config.afe_ringbuf_size = 25;
-    afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_4;
+    afe_config.vad_min_noise_ms = 500;
+    afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_1;
     // afe_config.agc_init = true;
 
     log::info!("{afe_config:?}");
@@ -145,16 +146,9 @@ pub enum AudioData {
     End(tokio::sync::oneshot::Sender<()>),
 }
 
-pub fn new_audio_chan() -> ((PlayerTx, MicRx), (MicTx, PlayerRx)) {
-    let (tx0, rx0) = tokio::sync::mpsc::unbounded_channel();
-    let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
-    ((tx1, rx0), (tx0, rx1))
-}
-
 pub type PlayerTx = tokio::sync::mpsc::UnboundedSender<AudioData>;
 pub type PlayerRx = tokio::sync::mpsc::UnboundedReceiver<AudioData>;
-pub type MicTx = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
-pub type MicRx = tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>;
+pub type MicTx = tokio::sync::mpsc::Sender<crate::app::Event>;
 
 pub async fn i2s_task(
     i2s: I2S0,
@@ -181,12 +175,8 @@ pub async fn i2s_task(
     }
 }
 
-fn afe_worker(
-    afe_handle: Arc<AFE>,
-    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-) -> anyhow::Result<()> {
+fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
     let mut speech = false;
-    let mut send_buf = vec![];
     loop {
         let result = afe_handle.fetch();
         if let Err(_e) = &result {
@@ -199,15 +189,15 @@ fn afe_worker(
 
         if result.speech {
             speech = true;
-            send_buf.extend_from_slice(&result.data);
+            log::info!("Speech detected, sending {} bytes", result.data.len());
+            tx.blocking_send(crate::app::Event::MicAudioChunk(result.data.to_vec()))
+                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
             continue;
         }
 
         if speech {
-            log::info!("Sending {} bytes", send_buf.len());
-            tx.send(send_buf)
+            tx.blocking_send(crate::app::Event::MicAudioEnd)
                 .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
-            send_buf = vec![];
             speech = false;
         }
     }
