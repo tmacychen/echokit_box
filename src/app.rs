@@ -28,48 +28,6 @@ impl Event {
     pub const K2: &'static str = "k2";
 }
 
-async fn submit_chat(
-    gui: &mut crate::ui::UI,
-    server: &mut Server,
-    mic_tx: &mpsc::UnboundedSender<mpsc::Sender<Vec<u8>>>,
-) -> anyhow::Result<usize> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-
-    if let Err(e) = mic_tx.send(tx) {
-        log::error!("Error sending mic tx: {:?}", e);
-        gui.state = "Error on mic tx".to_string();
-        gui.display_flush().unwrap();
-        return Err(anyhow::anyhow!("Error sending mic tx"));
-    }
-
-    gui.state = "Listening...".to_string();
-    gui.reset = false;
-    gui.display_flush().unwrap();
-    log::info!("Listening...");
-
-    let mut n = 0;
-    while let Some(data) = rx.recv().await {
-        let r = server.send(Message::binary(bytes::Bytes::from(data))).await;
-        log::info!("Sending data: {:?}", r);
-        r?;
-        n += 1;
-    }
-    if n > 0 {
-        server.send(Message::text("End:Normal")).await?;
-        gui.state = "Wait...".to_string();
-        gui.reset = false;
-        gui.display_flush().unwrap();
-        log::info!("Wait...");
-    } else {
-        gui.state = "IDLE".to_string();
-        gui.reset = false;
-        gui.display_flush().unwrap();
-        log::info!("IDLE");
-    }
-
-    Ok(n)
-}
-
 async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> Option<Event> {
     tokio::select! {
         Some(evt) = evt_rx.recv() => {
@@ -142,22 +100,9 @@ pub async fn main_work<'d>(
 
                 let _ = rx.await;
             }
-            Event::Event(Event::RESET | Event::K2) if idle => {
-                log::info!("Received reset");
-                gui.reset = true;
-                gui.display_flush().unwrap();
-            }
-            Event::Event(Event::YES | Event::K1) if gui.reset => {
-                // log::info!("Received yes");
-                // gui.display_flush().unwrap();
-                // clear_nvs(&mut nvs).unwrap();
-                // unsafe { esp_idf_svc::sys::esp_restart() };
-            }
-            Event::Event(Event::NO | Event::K2) if gui.reset => {
-                log::info!("Received no");
-                gui.reset = false;
-                gui.display_flush().unwrap();
-            }
+            Event::Event(Event::RESET | Event::K2) if idle => {}
+            Event::Event(Event::YES | Event::K1) => {}
+            Event::Event(Event::NO | Event::K2) => {}
             Event::Event(evt) => {
                 log::info!("Received event: {:?}", evt);
 
@@ -169,7 +114,6 @@ pub async fn main_work<'d>(
             Event::MicAudioChunk(data) => {
                 if gui.state != "Listening..." {
                     gui.state = "Listening...".to_string();
-                    gui.reset = false;
                     gui.display_flush().unwrap();
                 }
 

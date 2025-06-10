@@ -162,7 +162,6 @@ pub struct UI {
     text_area: Rectangle,
     text_background: Vec<Pixel<ColorFormat>>,
 
-    pub reset: bool,
     display: Box<
         Framebuffer<
             ColorFormat,
@@ -249,7 +248,6 @@ impl Default for UI {
             state_background: state_pixels,
             text: String::new(),
             text_background: box_pixels,
-            reset: false,
             display,
             state_area,
             text_area,
@@ -362,7 +360,6 @@ impl UI {
             state_background: state_pixels,
             text: String::new(),
             text_background: box_pixels,
-            reset: false,
             display,
             state_area,
             text_area,
@@ -390,38 +387,25 @@ impl UI {
         )
         .draw(self.display.as_mut())?;
 
-        if !self.reset {
-            let textbox_style = embedded_text::style::TextBoxStyleBuilder::new()
-                .height_mode(embedded_text::style::HeightMode::FitToText)
-                .alignment(embedded_text::alignment::HorizontalAlignment::Center)
-                .line_height(embedded_graphics::text::LineHeight::Percent(120))
-                .paragraph_spacing(16)
-                .build();
-            let text_box = TextBox::with_textbox_style(
-                &self.text,
-                self.text_area,
-                MyTextStyle(
-                    U8g2TextStyle::new(
-                        u8g2_fonts::fonts::u8g2_font_wqy16_t_gb2312,
-                        ColorFormat::CSS_WHEAT,
-                    ),
-                    3,
-                ),
-                textbox_style,
-            );
-            text_box.draw(self.display.as_mut())?;
-        } else {
-            Text::with_alignment(
-                &format!("Do you want to reset the device?\n[yes(K1)] or [no(K2)]"),
-                self.text_area.center(),
+        let textbox_style = embedded_text::style::TextBoxStyleBuilder::new()
+            .height_mode(embedded_text::style::HeightMode::FitToText)
+            .alignment(embedded_text::alignment::HorizontalAlignment::Center)
+            .line_height(embedded_graphics::text::LineHeight::Percent(120))
+            .paragraph_spacing(16)
+            .build();
+        let text_box = TextBox::with_textbox_style(
+            &self.text,
+            self.text_area,
+            MyTextStyle(
                 U8g2TextStyle::new(
-                    u8g2_fonts::fonts::u8g2_font_unifont_t_gb2312b,
-                    ColorFormat::CSS_SANDY_BROWN,
+                    u8g2_fonts::fonts::u8g2_font_wqy16_t_gb2312,
+                    ColorFormat::CSS_WHEAT,
                 ),
-                Alignment::Center,
-            )
-            .draw(self.display.as_mut())?;
-        }
+                3,
+            ),
+            textbox_style,
+        );
+        text_box.draw(self.display.as_mut())?;
 
         for i in 0..5 {
             let e = flush_area::<COLOR_WIDTH>(
