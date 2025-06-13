@@ -71,27 +71,36 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
     }
 }
 
+// TODO: 按键打断
+// TODO: 超时不监听
 pub async fn main_work<'d>(
     mut server: Server,
     player_tx: audio::PlayerTx,
     mut evt_rx: mpsc::Receiver<Event>,
 ) -> anyhow::Result<()> {
-    let mut gui = crate::ui::UI::default();
-    let mut idle = true;
+    #[derive(PartialEq, Eq)]
+    enum State {
+        Listening,
+        Wait,
+        Speaking,
+        Idle,
+    }
 
-    gui.state = "Connected to server".to_string();
+    let mut gui = crate::ui::UI::default();
+
+    gui.state = "Idle".to_string();
     gui.display_flush().unwrap();
 
     let mut new_gui_bg = vec![];
+
+    let mut state = State::Idle;
 
     while let Some(evt) = select_evt(&mut evt_rx, &mut server).await {
         match evt {
             Event::Event(Event::GAIA | Event::K0) => {
                 log::info!("Received event: gaia");
-                gui.state = "gaia".to_string();
-                gui.display_flush().unwrap();
-
-                idle = false;
+                // gui.state = "gaia".to_string();
+                // gui.display_flush().unwrap();
 
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 player_tx
@@ -99,30 +108,32 @@ pub async fn main_work<'d>(
                     .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
 
                 let _ = rx.await;
+
+                state = State::Listening;
+                gui.state = "Listening...".to_string();
+                gui.display_flush().unwrap();
             }
-            Event::Event(Event::RESET | Event::K2) if idle => {}
+            Event::Event(Event::RESET | Event::K2) => {}
             Event::Event(Event::YES | Event::K1) => {}
-            Event::Event(Event::NO | Event::K2) => {}
+            Event::Event(Event::NO) => {}
             Event::Event(evt) => {
                 log::info!("Received event: {:?}", evt);
-
-                if idle {
-                    gui.state = evt.to_string();
-                    gui.display_flush().unwrap();
-                }
             }
             Event::MicAudioChunk(data) => {
-                if gui.state != "Listening..." {
-                    gui.state = "Listening...".to_string();
-                    gui.display_flush().unwrap();
+                if state == State::Listening {
+                    server
+                        .send(Message::binary(bytes::Bytes::from(data)))
+                        .await?;
+                } else {
+                    log::warn!("Received MicAudioChunk while not listening");
                 }
-
-                server
-                    .send(Message::binary(bytes::Bytes::from(data)))
-                    .await?;
             }
             Event::MicAudioEnd => {
-                server.send(Message::text("End:Normal")).await?;
+                if state == State::Listening {
+                    server.send(Message::text("End:Normal")).await?;
+                    gui.state = "Wait".to_string();
+                    gui.display_flush().unwrap();
+                }
             }
             Event::ServerEvent(ServerEvent::ASR { text }) => {
                 log::info!("Received ASR: {:?}", text);
@@ -137,16 +148,21 @@ pub async fn main_work<'d>(
             }
             Event::ServerEvent(ServerEvent::StartAudio { text }) => {
                 log::info!("Received audio start: {:?}", text);
+                state = State::Speaking;
                 gui.state = "Speaking...".to_string();
                 gui.text = text.trim().to_string();
                 gui.display_flush().unwrap();
-                log::info!("submit_chat done, idle: {}", idle);
                 player_tx
                     .send(AudioData::Start)
                     .map_err(|e| anyhow::anyhow!("Error sending start: {e:?}"))?;
             }
             Event::ServerEvent(ServerEvent::AudioChunk { data }) => {
                 log::info!("Received audio chunk");
+                if state != State::Speaking {
+                    log::warn!("Received audio chunk while not speaking");
+                    continue;
+                }
+
                 if let Err(e) = player_tx.send(AudioData::Chunk(data.to_vec())) {
                     log::error!("Error sending audio chunk: {:?}", e);
                     gui.state = "Error on audio chunk".to_string();
@@ -155,7 +171,6 @@ pub async fn main_work<'d>(
             }
             Event::ServerEvent(ServerEvent::EndAudio) => {
                 log::info!("Received audio end");
-                gui.state = "Pause".to_string();
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 if let Err(e) = player_tx.send(AudioData::End(tx)) {
                     log::error!("Error sending audio chunk: {:?}", e);
@@ -168,7 +183,9 @@ pub async fn main_work<'d>(
 
             Event::ServerEvent(ServerEvent::EndResponse) => {
                 log::info!("Received request end");
-                log::info!("submit_chat done, idle: {}", idle);
+                state = State::Listening;
+                gui.state = "Listening...".to_string();
+                gui.display_flush().unwrap();
             }
             Event::ServerEvent(ServerEvent::HelloStart) => {
                 if let Err(_) = player_tx.send(AudioData::SetHelloStart) {
