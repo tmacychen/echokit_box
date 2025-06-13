@@ -95,6 +95,8 @@ pub async fn main_work<'d>(
 
     let mut state = State::Idle;
 
+    let mut submit_audio = 0.0;
+
     while let Some(evt) = select_evt(&mut evt_rx, &mut server).await {
         match evt {
             Event::Event(Event::GAIA | Event::K0) => {
@@ -121,6 +123,7 @@ pub async fn main_work<'d>(
             }
             Event::MicAudioChunk(data) => {
                 if state == State::Listening {
+                    submit_audio += data.len() as f32 / 32000.0;
                     server
                         .send(Message::binary(bytes::Bytes::from(data)))
                         .await?;
@@ -129,11 +132,10 @@ pub async fn main_work<'d>(
                 }
             }
             Event::MicAudioEnd => {
-                if state == State::Listening {
+                if state == State::Listening && submit_audio > 1.0 {
                     server.send(Message::text("End:Normal")).await?;
-                    gui.state = "Wait".to_string();
-                    gui.display_flush().unwrap();
                 }
+                submit_audio = 0.0;
             }
             Event::ServerEvent(ServerEvent::ASR { text }) => {
                 log::info!("Received ASR: {:?}", text);
@@ -163,7 +165,7 @@ pub async fn main_work<'d>(
                     continue;
                 }
 
-                if let Err(e) = player_tx.send(AudioData::Chunk(data.to_vec())) {
+                if let Err(e) = player_tx.send(AudioData::Chunk(data)) {
                     log::error!("Error sending audio chunk: {:?}", e);
                     gui.state = "Error on audio chunk".to_string();
                     gui.display_flush().unwrap();
