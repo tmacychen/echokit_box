@@ -59,6 +59,7 @@ unsafe fn afe_init() -> (
 struct AFE {
     handle: *mut esp_sr::esp_afe_sr_iface_t,
     data: *mut esp_sr::esp_afe_sr_data_t,
+    #[allow(unused)]
     feed_chunksize: usize,
 }
 
@@ -86,6 +87,7 @@ impl AFE {
     }
     // returns the number of bytes fed
 
+    #[allow(dead_code)]
     fn reset(&self) {
         let afe_handle = self.handle;
         let afe_data = self.data;
@@ -230,21 +232,25 @@ async fn i2s_player(
     driver.rx_enable()?;
 
     let mut buf = [0u8; 2 * 160];
-    let mut wait_start = false;
+    let mut speaking = false;
 
     let mut hello_audio = WAKE_WAV.to_vec();
 
-    driver.write_all_async(&hello_audio).await?;
+    driver.write_all(&hello_audio, 100 / PORT_TICK_PERIOD_MS)?;
 
     loop {
-        let data = tokio::select! {
-            Some(data) = rx.recv() =>{
-                Some(data)
-            }
-            _ = async {} => {
-                let n = driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
-                afe_handle.feed(&buf[..n]);
-                None
+        let data = if speaking {
+            rx.recv().await
+        } else {
+            tokio::select! {
+                Some(data) = rx.recv() =>{
+                    Some(data)
+                }
+                _ = async {} => {
+                    let n = driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
+                    afe_handle.feed(&buf[..n]);
+                    None
+                }
             }
         };
         if let Some(data) = data {
@@ -256,7 +262,7 @@ async fn i2s_player(
                         .await
                         .map_err(|e| anyhow::anyhow!("Error play hello: {:?}", e))?;
                     let _ = tx.send(());
-                    wait_start = true;
+                    speaking = false;
                 }
                 AudioData::SetHelloStart => {
                     log::info!("Received set hello start");
@@ -275,11 +281,11 @@ async fn i2s_player(
                 }
                 AudioData::Start => {
                     log::info!("Received start");
-                    wait_start = false;
+                    speaking = true;
                 }
                 AudioData::Chunk(data) => {
                     log::info!("Received audio chunk");
-                    if !wait_start {
+                    if speaking {
                         driver
                             .write_all_async(&data)
                             .await
@@ -289,6 +295,8 @@ async fn i2s_player(
                 AudioData::End(tx) => {
                     log::info!("Received end");
                     let _ = tx.send(());
+                    speaking = false;
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
             }
         } else {
