@@ -104,16 +104,22 @@ pub async fn main_work<'d>(
                 // gui.state = "gaia".to_string();
                 // gui.display_flush().unwrap();
 
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                player_tx
-                    .send(AudioData::Hello(tx))
-                    .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
+                if state == State::Listening {
+                    state = State::Idle;
+                    gui.state = "Idle".to_string();
+                    gui.display_flush().unwrap();
+                } else {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    player_tx
+                        .send(AudioData::Hello(tx))
+                        .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
 
-                let _ = rx.await;
+                    let _ = rx.await;
 
-                state = State::Listening;
-                gui.state = "Listening...".to_string();
-                gui.display_flush().unwrap();
+                    state = State::Listening;
+                    gui.state = "Listening...".to_string();
+                    gui.display_flush().unwrap();
+                }
             }
             Event::Event(Event::RESET | Event::K2) => {}
             Event::Event(Event::YES | Event::K1) => {}
