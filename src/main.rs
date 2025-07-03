@@ -172,9 +172,12 @@ fn main() -> anyhow::Result<()> {
     let partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take()?;
     let nvs = esp_idf_svc::nvs::EspDefaultNvs::new(partition, "setting", true)?;
 
+    log_heap();
+
     audio::audio_init();
     ui::lcd_init();
 
+    log_heap();
     let mut ssid_buf = [0; 32];
     let ssid = nvs
         .get_str("ssid", &mut ssid_buf)
@@ -199,6 +202,7 @@ fn main() -> anyhow::Result<()> {
     log::info!("SSID: {:?}", ssid);
     log::info!("PASS: {:?}", pass);
     log::info!("Server URL: {:?}", server_url);
+    log_heap();
 
     // let _ = ui::backgroud();
 
@@ -227,6 +231,7 @@ fn main() -> anyhow::Result<()> {
     )));
 
     bt::bt(setting.clone()).unwrap();
+    log_heap();
 
     loop {
         let need_init = {
@@ -267,6 +272,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let wifi = _wifi.unwrap();
+    log_heap();
 
     let mac = wifi.ap_netif().get_mac().unwrap();
     let mac_str = format!(
@@ -374,11 +380,15 @@ fn main() -> anyhow::Result<()> {
 
 pub fn log_heap() {
     unsafe {
-        use esp_idf_svc::sys::{heap_caps_get_free_size, MALLOC_CAP_8BIT};
+        use esp_idf_svc::sys::{heap_caps_get_free_size, MALLOC_CAP_INTERNAL, MALLOC_CAP_SPIRAM};
 
         log::info!(
             "Free heap size: {}",
-            heap_caps_get_free_size(MALLOC_CAP_8BIT)
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
+        );
+        log::info!(
+            "Free internal heap size: {}",
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
         );
     }
 }
