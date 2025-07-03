@@ -172,9 +172,12 @@ fn main() -> anyhow::Result<()> {
     let partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take()?;
     let nvs = esp_idf_svc::nvs::EspDefaultNvs::new(partition, "setting", true)?;
 
+    log_heap();
+
     // audio::audio_init();
     ui::lcd_init().unwrap();
 
+    log_heap();
     let mut ssid_buf = [0; 32];
     let ssid = nvs
         .get_str("ssid", &mut ssid_buf)
@@ -229,6 +232,7 @@ fn main() -> anyhow::Result<()> {
     )));
 
     bt::bt(setting.clone()).unwrap();
+    log_heap();
 
     loop {
         let need_init = {
@@ -269,6 +273,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let wifi = _wifi.unwrap();
+    log_heap();
 
     let r = network::http_get("http://httpbin.org/get")
         .map_err(|e| log::error!("Failed to get httpbin: {:?}", e))
@@ -363,6 +368,10 @@ pub fn log_heap() {
 
         log::info!(
             "Free heap size: {}",
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
+        );
+        log::info!(
+            "Free internal heap size: {}",
             heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
         );
         log::info!(
