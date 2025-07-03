@@ -24,8 +24,6 @@ pub fn wifi(
 
     let mut wifi = BlockingWifi::wrap(&mut esp_wifi, sysloop)?;
 
-    wifi.start()?;
-
     wifi.set_configuration(&esp_idf_svc::wifi::Configuration::Client(
         esp_idf_svc::wifi::ClientConfiguration {
             ssid: ssid
@@ -38,6 +36,8 @@ pub fn wifi(
             ..Default::default()
         },
     ))?;
+
+    wifi.start()?;
 
     info!("Connecting wifi...");
 

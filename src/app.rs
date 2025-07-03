@@ -113,8 +113,9 @@ pub async fn main_work<'d>(
                     player_tx
                         .send(AudioData::Hello(tx))
                         .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
-
+                    log::info!("Waiting for hello response");
                     let _ = rx.await;
+                    log::info!("Hello response received");
 
                     state = State::Listening;
                     gui.state = "Listening...".to_string();
@@ -129,16 +130,25 @@ pub async fn main_work<'d>(
             }
             Event::MicAudioChunk(data) => {
                 if state == State::Listening {
+                    log::info!(
+                        "Received MicAudioChunk with {} bytes on Listening",
+                        data.len()
+                    );
                     submit_audio += data.len() as f32 / 32000.0;
                     server
                         .send(Message::binary(bytes::Bytes::from(data)))
                         .await?;
+                    log::info!(
+                        "Submitted audio chunk, total time: {:.2} seconds",
+                        submit_audio
+                    );
                 } else {
                     log::warn!("Received MicAudioChunk while not listening");
                 }
             }
             Event::MicAudioEnd => {
                 if state == State::Listening && submit_audio > 1.0 {
+                    log::info!("Submitting audio after {} seconds", submit_audio);
                     server.send(Message::text("End:Normal")).await?;
                 }
                 submit_audio = 0.0;

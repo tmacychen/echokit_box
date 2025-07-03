@@ -172,8 +172,8 @@ fn main() -> anyhow::Result<()> {
     let partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take()?;
     let nvs = esp_idf_svc::nvs::EspDefaultNvs::new(partition, "setting", true)?;
 
-    audio::audio_init();
-    ui::lcd_init();
+    // audio::audio_init();
+    ui::lcd_init().unwrap();
 
     let mut ssid_buf = [0; 32];
     let ssid = nvs
@@ -200,16 +200,18 @@ fn main() -> anyhow::Result<()> {
     log::info!("PASS: {:?}", pass);
     log::info!("Server URL: {:?}", server_url);
 
-    // let _ = ui::backgroud();
+    log_heap();
+
+    let _ = ui::backgroud();
 
     // Configures the button
     let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
     button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
     button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::PosEdge)?;
 
-    let mut ex_button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio3)?;
-    ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
-    ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
+    // let mut ex_button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio3)?;
+    // ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
+    // ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
 
     let b = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -268,32 +270,45 @@ fn main() -> anyhow::Result<()> {
 
     let wifi = _wifi.unwrap();
 
+    let r = network::http_get("http://httpbin.org/get")
+        .map_err(|e| log::error!("Failed to get httpbin: {:?}", e))
+        .ok()
+        .unwrap();
+    log::info!("HTTP GET response: {:?}", r.status());
+
     let mac = wifi.ap_netif().get_mac().unwrap();
     let mac_str = format!(
         "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     );
 
-    let bclk = peripherals.pins.gpio21;
-    let din = peripherals.pins.gpio47;
-    let dout = peripherals.pins.gpio14;
-    let ws = peripherals.pins.gpio13;
+    let sck = peripherals.pins.gpio5;
+    let din = peripherals.pins.gpio6;
+    let dout = peripherals.pins.gpio7;
+    let ws = peripherals.pins.gpio4;
+    let bclk = peripherals.pins.gpio15;
+    let lrclk = peripherals.pins.gpio16;
 
     let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(64);
     let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
 
-    let i2s_task = audio::i2s_task(
+    let i2s_task = audio::i2s_task_(
         peripherals.i2s0,
-        bclk.into(),
-        din.into(),
-        dout.into(),
         ws.into(),
+        sck.into(),
+        din.into(),
+        peripherals.i2s1,
+        bclk.into(),
+        lrclk.into(),
+        dout.into(),
         (evt_tx.clone(), rx1),
     );
 
     gui.state = "Connecting to server...".to_string();
     gui.text.clear();
     gui.display_flush().unwrap();
+
+    log_heap();
 
     let server_url = {
         let setting = setting.lock().unwrap();
@@ -310,7 +325,7 @@ fn main() -> anyhow::Result<()> {
 
     let server = server.unwrap();
 
-    let ex_evt_tx = evt_tx.clone();
+    // let ex_evt_tx = evt_tx.clone();
 
     let ws_task = app::main_work(server, tx1, evt_rx);
 
@@ -328,37 +343,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
-    b.spawn(async move {
-        loop {
-            let _ = ex_button.wait_for_falling_edge().await;
-            let r = unsafe { esp_idf_svc::sys::hal_driver::xl9555_key_scan(0) } as u32;
-            match r {
-                esp_idf_svc::sys::hal_driver::KEY0_PRES => {
-                    log::info!("KEY1_PRES");
-                    if ex_evt_tx
-                        .send(app::Event::Event(app::Event::K1))
-                        .await
-                        .is_err()
-                    {
-                        log::error!("Failed to send K1 event");
-                        break;
-                    }
-                }
-                esp_idf_svc::sys::hal_driver::KEY1_PRES => {
-                    log::info!("KEY2_PRES");
-                    if ex_evt_tx
-                        .send(app::Event::Event(app::Event::K2))
-                        .await
-                        .is_err()
-                    {
-                        log::error!("Failed to send K2 event");
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
+
     b.spawn(i2s_task);
     b.block_on(async move {
         let r = ws_task.await;
@@ -374,11 +359,15 @@ fn main() -> anyhow::Result<()> {
 
 pub fn log_heap() {
     unsafe {
-        use esp_idf_svc::sys::{heap_caps_get_free_size, MALLOC_CAP_8BIT};
+        use esp_idf_svc::sys::{heap_caps_get_free_size, MALLOC_CAP_INTERNAL, MALLOC_CAP_SPIRAM};
 
         log::info!(
             "Free heap size: {}",
-            heap_caps_get_free_size(MALLOC_CAP_8BIT)
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
+        );
+        log::info!(
+            "Free internal heap size: {}",
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
         );
     }
 }
