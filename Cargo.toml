@@ -75,7 +75,7 @@ remote_component = { name = "espressif/esp-sr", version = "^2.0.0" }
 bindings_header = "components/esp_sr/bindgen.h"
 bindings_module = "esp_sr"
 
-[[package.metadata.esp-idf-sys.extra_components]]
-component_dirs = ["components/hal_driver"]
-bindings_header = "components/hal_driver/wrapper.h"
-bindings_module = "hal_driver"
+# [[package.metadata.esp-idf-sys.extra_components]]
+# component_dirs = ["components/hal_driver"]
+# bindings_header = "components/hal_driver/wrapper.h"
+# bindings_module = "hal_driver"
