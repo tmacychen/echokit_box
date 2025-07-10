@@ -64,6 +64,16 @@ Delete the existing firmware if needed.
 espflash erase-flash
 ```
 
+## Build from the source
+
+First, make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html).
+
+You can then build from the source and find the binary firmware in `target/release/`.
+
+```
+cargo build --release
+```
+
 ## Next steps
 
 You will need to configure and start up an [EchoKit server](https://github.com/second-state/echokit_server), and then configure your device to connect to the server in order for the EchoKit device to be fully functional.
