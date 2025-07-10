@@ -16,7 +16,7 @@ Get a pre-compiled binary version of the firmware.
 curl -LO https://echokit.dev/firmware/echokit-boards
 ```
 
-To build the `echokit-boards` firmware file from source, you can do the following.
+To build the `echokit-boards` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/release/`.
 
 ```
 cargo build --release
@@ -62,16 +62,6 @@ Delete the existing firmware if needed.
 
 ```
 espflash erase-flash
-```
-
-## Build from the source
-
-First, make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html).
-
-You can then build from the source and find the binary firmware in `target/release/`.
-
-```
-cargo build --release
 ```
 
 ## Next steps
