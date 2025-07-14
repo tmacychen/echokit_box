@@ -362,6 +362,59 @@ fn flush_area<const COLOR_WIDTH: u32>(data: &[u8], size: Size, area: Rectangle) 
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct QrPixel(ColorFormat);
+
+impl qrcode::render::Pixel for QrPixel {
+    type Image = ((u32, u32), Vec<embedded_graphics::Pixel<ColorFormat>>);
+
+    type Canvas = QrCanvas;
+
+    fn default_color(color: qrcode::Color) -> Self {
+        match color {
+            qrcode::Color::Dark => QrPixel(ColorFormat::BLACK),
+            qrcode::Color::Light => QrPixel(ColorFormat::WHITE),
+        }
+    }
+}
+
+pub struct QrCanvas {
+    width: u32,
+    height: u32,
+    dark_pixel: QrPixel,
+    light_pixel: QrPixel,
+    pixels: Vec<embedded_graphics::Pixel<ColorFormat>>,
+}
+
+impl qrcode::render::Canvas for QrCanvas {
+    type Pixel = QrPixel;
+
+    type Image = ((u32, u32), Vec<embedded_graphics::Pixel<ColorFormat>>);
+
+    fn new(width: u32, height: u32, dark_pixel: Self::Pixel, light_pixel: Self::Pixel) -> Self {
+        Self {
+            width,
+            height,
+            dark_pixel,
+            light_pixel,
+            pixels: Vec::with_capacity((width * height) as usize),
+        }
+    }
+
+    fn draw_dark_pixel(&mut self, x: u32, y: u32) {
+        if x < self.width && y < self.height {
+            self.pixels.push(embedded_graphics::Pixel(
+                Point::new(x as i32, y as i32),
+                self.dark_pixel.0,
+            ));
+        }
+    }
+
+    fn into_image(self) -> Self::Image {
+        ((self.width, self.height), self.pixels)
+    }
+}
+
 impl UI {
     pub fn new(backgroud_gif: Option<&[u8]>) -> anyhow::Result<Self> {
         let mut display = Box::new(Framebuffer::<
@@ -474,6 +527,85 @@ impl UI {
             MyTextStyle(
                 U8g2TextStyle::new(
                     u8g2_fonts::fonts::u8g2_font_wqy16_t_gb2312,
+                    ColorFormat::CSS_WHEAT,
+                ),
+                3,
+            ),
+            textbox_style,
+        );
+        text_box.draw(self.display.as_mut())?;
+
+        for i in 0..5 {
+            let e = flush_area::<COLOR_WIDTH>(
+                self.display.data(),
+                self.display.size(),
+                Rectangle::new(
+                    self.state_area.top_left,
+                    Size::new(
+                        self.text_area.size.width,
+                        self.text_area.size.height + self.state_area.size.height,
+                    ),
+                ),
+            );
+            if e == 0 {
+                break;
+            }
+            log::warn!("flush_display error: {} retry {i}", e);
+        }
+        Ok(())
+    }
+
+    pub fn display_qrcode(&mut self, qr_context: &str) -> anyhow::Result<()> {
+        let code = qrcode::QrCode::new(qr_context).unwrap();
+        let ((width, height), code_pixel) = code
+            .render::<QrPixel>()
+            .quiet_zone(true)
+            .module_dimensions(4, 4)
+            .build();
+
+        self.state_background
+            .iter()
+            .cloned()
+            .draw(self.display.as_mut())?;
+        self.text_background
+            .iter()
+            .cloned()
+            .draw(self.display.as_mut())?;
+
+        self.display
+            .cropped(&Rectangle::new(
+                self.text_area.top_left
+                    + Point::new(
+                        ((self.text_area.size.width - width) / 2) as i32,
+                        (self.text_area.size.height - height) as i32,
+                    ),
+                Size::new(width, height),
+            ))
+            .draw_iter(code_pixel)?;
+
+        Text::with_alignment(
+            &self.state,
+            self.state_area.center(),
+            U8g2TextStyle::new(
+                u8g2_fonts::fonts::u8g2_font_wqy12_t_gb2312a,
+                ColorFormat::CSS_LIGHT_CYAN,
+            ),
+            Alignment::Center,
+        )
+        .draw(self.display.as_mut())?;
+
+        let textbox_style = embedded_text::style::TextBoxStyleBuilder::new()
+            .height_mode(embedded_text::style::HeightMode::FitToText)
+            .alignment(embedded_text::alignment::HorizontalAlignment::Center)
+            .line_height(embedded_graphics::text::LineHeight::Percent(120))
+            .paragraph_spacing(16)
+            .build();
+        let text_box = TextBox::with_textbox_style(
+            &self.text,
+            self.text_area,
+            MyTextStyle(
+                U8g2TextStyle::new(
+                    u8g2_fonts::fonts::u8g2_font_wqy12_t_gb2312a,
                     ColorFormat::CSS_WHEAT,
                 ),
                 3,
