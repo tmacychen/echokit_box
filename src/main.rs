@@ -231,24 +231,24 @@ fn main() -> anyhow::Result<()> {
         nvs,
     )));
 
-    bt::bt(setting.clone()).unwrap();
     log_heap();
 
-    loop {
-        let need_init = {
-            let setting = setting.lock().unwrap();
-            setting.0.ssid.is_empty()
-                || setting.0.pass.is_empty()
-                || setting.0.server_url.is_empty()
-        };
-        if need_init {
-            gui.state = "Please setup device by bt".to_string();
-            gui.text = "Press K0 to continue".to_string();
-            gui.display_flush().unwrap();
-            b.block_on(button.wait_for_falling_edge()).unwrap();
-        } else {
-            break;
-        }
+    let need_init = {
+        let setting = setting.lock().unwrap();
+        setting.0.ssid.is_empty()
+            || setting.0.pass.is_empty()
+            || setting.0.server_url.is_empty()
+            || button.is_low()
+    };
+    if need_init {
+        bt::bt(setting.clone()).unwrap();
+        log_heap();
+
+        gui.state = "Please setup device by bt".to_string();
+        gui.text = "Press K0 to continue".to_string();
+        gui.display_flush().unwrap();
+        b.block_on(button.wait_for_falling_edge()).unwrap();
+        unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
     gui.state = "Connecting to wifi...".to_string();
