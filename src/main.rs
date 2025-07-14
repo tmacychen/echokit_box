@@ -244,8 +244,9 @@ fn main() -> anyhow::Result<()> {
         log_heap();
 
         gui.state = "Please setup device by bt".to_string();
-        gui.text = "Press K0 to continue".to_string();
-        gui.display_flush().unwrap();
+        gui.text = "Goto https://echokit.dev/setup/ to set up the device.\nPress K0 to continue"
+            .to_string();
+        gui.display_qrcode("https://echokit.dev/setup/").unwrap();
         b.block_on(button.wait_for_falling_edge()).unwrap();
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
