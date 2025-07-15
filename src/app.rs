@@ -97,6 +97,8 @@ pub async fn main_work<'d>(
 
     let mut submit_audio = 0.0;
 
+    let mut submit_audio_buffer = Vec::with_capacity(8192);
+
     while let Some(evt) = select_evt(&mut evt_rx, &mut server).await {
         match evt {
             Event::Event(Event::GAIA | Event::K0) => {
@@ -130,15 +132,26 @@ pub async fn main_work<'d>(
             Event::MicAudioChunk(data) => {
                 if state == State::Listening {
                     submit_audio += data.len() as f32 / 32000.0;
-                    server
-                        .send(Message::binary(bytes::Bytes::from(data)))
-                        .await?;
+                    submit_audio_buffer.extend_from_slice(&data);
+                    // 0.5秒提交一次
+                    if submit_audio_buffer.len() >= 8192 {
+                        server
+                            .send(Message::binary(bytes::Bytes::from(submit_audio_buffer)))
+                            .await?;
+                        submit_audio_buffer = Vec::with_capacity(8192);
+                    }
                 } else {
                     log::warn!("Received MicAudioChunk while not listening");
                 }
             }
             Event::MicAudioEnd => {
                 if state == State::Listening && submit_audio > 1.0 {
+                    if !submit_audio_buffer.is_empty() {
+                        server
+                            .send(Message::binary(bytes::Bytes::from(submit_audio_buffer)))
+                            .await?;
+                        submit_audio_buffer = Vec::with_capacity(8192);
+                    }
                     server.send(Message::text("End:Normal")).await?;
                 }
                 submit_audio = 0.0;

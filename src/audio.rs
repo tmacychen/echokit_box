@@ -192,7 +192,7 @@ fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
         if result.speech {
             speech = true;
             log::info!("Speech detected, sending {} bytes", result.data.len());
-            tx.blocking_send(crate::app::Event::MicAudioChunk(result.data.to_vec()))
+            tx.blocking_send(crate::app::Event::MicAudioChunk(result.data))
                 .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
             continue;
         }
