@@ -24,6 +24,8 @@ impl Event {
     pub const RESET: &'static str = "reset";
     pub const UNKNOWN: &'static str = "unknown";
     pub const K0: &'static str = "k0";
+    pub const K0_: &'static str = "k0_";
+
     pub const K1: &'static str = "k1";
     pub const K2: &'static str = "k2";
 }
@@ -81,6 +83,7 @@ pub async fn main_work<'d>(
     #[derive(PartialEq, Eq)]
     enum State {
         Listening,
+        Recording,
         Wait,
         Speaking,
         Idle,
@@ -124,6 +127,17 @@ pub async fn main_work<'d>(
                     gui.display_flush().unwrap();
                 }
             }
+            Event::Event(Event::K0_) => {
+                if state == State::Idle || state == State::Listening {
+                    log::info!("Received event: K0_");
+                    state = State::Recording;
+                    gui.state = "Recording...".to_string();
+                    gui.text = String::new();
+                    gui.display_flush().unwrap();
+                } else {
+                    log::warn!("Received K0_ while not idle");
+                }
+            }
             Event::Event(Event::RESET | Event::K2) => {}
             Event::Event(Event::YES | Event::K1) => {}
             Event::Event(Event::NO) => {}
@@ -131,11 +145,7 @@ pub async fn main_work<'d>(
                 log::info!("Received event: {:?}", evt);
             }
             Event::MicAudioChunk(data) => {
-                if state == State::Listening {
-                    log::info!(
-                        "Received MicAudioChunk with {} bytes on Listening",
-                        data.len()
-                    );
+                if state == State::Listening || state == State::Recording {
                     submit_audio += data.len() as f32 / 32000.0;
                     submit_audio_buffer.extend_from_slice(&data);
                     // 0.5秒提交一次
@@ -150,14 +160,18 @@ pub async fn main_work<'d>(
                 }
             }
             Event::MicAudioEnd => {
-                if state == State::Listening && submit_audio > 1.0 {
+                if (state == State::Listening || state == State::Recording) && submit_audio > 1.0 {
                     if !submit_audio_buffer.is_empty() {
                         server
                             .send(Message::binary(bytes::Bytes::from(submit_audio_buffer)))
                             .await?;
                         submit_audio_buffer = Vec::with_capacity(8192);
                     }
-                    server.send(Message::text("End:Normal")).await?;
+                    if state == State::Listening {
+                        server.send(Message::text("End:Normal")).await?;
+                    } else {
+                        server.send(Message::text("End:Recording")).await?;
+                    }
                 }
                 submit_audio = 0.0;
             }

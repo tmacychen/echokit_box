@@ -339,13 +339,33 @@ fn main() -> anyhow::Result<()> {
         loop {
             let _ = button.wait_for_falling_edge().await;
             log::info!("Button k0 pressed {:?}", button.get_level());
-            if evt_tx
-                .send(app::Event::Event(app::Event::K0))
-                .await
-                .is_err()
-            {
-                log::error!("Failed to send K0 event");
-                break;
+
+            let r = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                button.wait_for_rising_edge(),
+            )
+            .await;
+            match r {
+                Ok(_) => {
+                    if evt_tx
+                        .send(app::Event::Event(app::Event::K0))
+                        .await
+                        .is_err()
+                    {
+                        log::error!("Failed to send K0 event");
+                        break;
+                    }
+                }
+                Err(_) => {
+                    if evt_tx
+                        .send(app::Event::Event(app::Event::K0_))
+                        .await
+                        .is_err()
+                    {
+                        log::error!("Failed to send K0 event");
+                        break;
+                    }
+                }
             }
         }
     });
