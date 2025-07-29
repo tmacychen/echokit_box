@@ -1,5 +1,5 @@
 [package]
-name = "echokit-box"
+name = "echokit-boards"
 version = "0.1.0"
 authors = ["csh <458761603@qq.com>"]
 edition = "2021"
@@ -7,8 +7,8 @@ resolver = "2"
 rust-version = "1.77"
 
 [[bin]]
-name = "echokit-box"
-harness = false      # do not use the built in cargo test harness -> resolve rust-analyzer errors
+name = "echokit-boards"
+harness = false             # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]
 opt-level = "s"
