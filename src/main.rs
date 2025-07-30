@@ -66,6 +66,14 @@ fn main() -> anyhow::Result<()> {
     log_heap();
     if let Some(background_gif) = background_gif {
         let _ = ui::backgroud(&background_gif);
+    } else {
+        let mut ui = ui::UI::new(None).unwrap();
+        ui.text = "You can hold K0 goto setup page".to_string();
+        for i in 0..3 {
+            ui.state = format!("Device starting... {}", 3 - i);
+            ui.display_flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
 
     // Configures the button
