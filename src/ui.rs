@@ -2,7 +2,7 @@ use embedded_graphics::{
     framebuffer::{buffer_size, Framebuffer},
     image::GetPixel,
     pixelcolor::{
-        raw::{BigEndian, RawU16},
+        raw::{LittleEndian, RawU16},
         Rgb565,
     },
     prelude::*,
@@ -20,7 +20,14 @@ pub const GIF_IMG: &[u8] = include_bytes!("../assets/ht.gif");
 
 pub type ColorFormat = Rgb565;
 
+#[cfg(feature = "boards")]
 const DISPLAY_WIDTH: usize = 240;
+#[cfg(feature = "boards")]
+const DISPLAY_HEIGHT: usize = 240;
+
+#[cfg(feature = "box")]
+const DISPLAY_WIDTH: usize = 320;
+#[cfg(feature = "box")]
 const DISPLAY_HEIGHT: usize = 240;
 
 fn init_spi() -> Result<(), EspError> {
@@ -46,6 +53,7 @@ fn init_spi() -> Result<(), EspError> {
 
 static mut ESP_LCD_PANEL_HANDLE: esp_idf_svc::sys::esp_lcd_panel_handle_t = std::ptr::null_mut();
 
+#[cfg(feature = "boards")]
 fn init_lcd() -> Result<(), EspError> {
     use esp_idf_svc::sys::*;
     const DISPLAY_CS_PIN: i32 = 41;
@@ -70,7 +78,7 @@ fn init_lcd() -> Result<(), EspError> {
     let mut panel: esp_lcd_panel_handle_t = std::ptr::null_mut();
 
     panel_config.reset_gpio_num = DISPLAY_RST_PIN;
-    panel_config.data_endian = lcd_rgb_data_endian_t_LCD_RGB_DATA_ENDIAN_BIG;
+    panel_config.data_endian = lcd_rgb_data_endian_t_LCD_RGB_DATA_ENDIAN_LITTLE;
     panel_config.__bindgen_anon_1.rgb_ele_order = lcd_rgb_element_order_t_LCD_RGB_ELEMENT_ORDER_RGB;
     panel_config.bits_per_pixel = 16;
 
@@ -99,16 +107,39 @@ fn init_lcd() -> Result<(), EspError> {
     Ok(())
 }
 
+#[cfg(feature = "boards")]
 pub fn lcd_init() -> Result<(), EspError> {
     init_spi()?;
     init_lcd()?;
     Ok(())
 }
 
+#[cfg(feature = "box")]
+pub fn lcd_init() -> Result<(), EspError> {
+    use esp_idf_svc::sys::hal_driver;
+    unsafe {
+        let config: hal_driver::lcd_cfg_t = std::mem::zeroed();
+        hal_driver::lcd_init(config);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn get_esp_lcd_panel_handle() -> esp_idf_svc::sys::esp_lcd_panel_handle_t {
+    #[cfg(feature = "boards")]
+    unsafe {
+        ESP_LCD_PANEL_HANDLE
+    }
+    #[cfg(feature = "box")]
+    unsafe {
+        std::mem::transmute(esp_idf_svc::sys::hal_driver::panel_handle)
+    }
+}
+
 pub fn flush_display(color_data: &[u8], x_start: i32, y_start: i32, x_end: i32, y_end: i32) -> i32 {
     unsafe {
         let e = esp_idf_svc::sys::esp_lcd_panel_draw_bitmap(
-            ESP_LCD_PANEL_HANDLE,
+            get_esp_lcd_panel_handle(),
             x_start,
             y_start,
             x_end,
@@ -129,7 +160,7 @@ pub fn backgroud() -> Result<(), std::convert::Infallible> {
     let mut display = Box::new(Framebuffer::<
         ColorFormat,
         _,
-        BigEndian,
+        LittleEndian,
         DISPLAY_WIDTH,
         DISPLAY_HEIGHT,
         { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
@@ -243,7 +274,7 @@ pub struct UI {
         Framebuffer<
             ColorFormat,
             RawU16,
-            BigEndian,
+            LittleEndian,
             DISPLAY_WIDTH,
             DISPLAY_HEIGHT,
             { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
@@ -258,7 +289,7 @@ impl Default for UI {
         let mut display = Box::new(Framebuffer::<
             ColorFormat,
             _,
-            BigEndian,
+            LittleEndian,
             DISPLAY_WIDTH,
             DISPLAY_HEIGHT,
             { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
@@ -420,7 +451,7 @@ impl UI {
         let mut display = Box::new(Framebuffer::<
             ColorFormat,
             _,
-            BigEndian,
+            LittleEndian,
             DISPLAY_WIDTH,
             DISPLAY_HEIGHT,
             { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },

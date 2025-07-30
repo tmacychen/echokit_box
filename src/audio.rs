@@ -8,18 +8,6 @@ use esp_idf_svc::sys::esp_sr;
 const SAMPLE_RATE: u32 = 16000;
 const PORT_TICK_PERIOD_MS: u32 = 1000 / esp_idf_svc::sys::configTICK_RATE_HZ;
 
-// pub fn audio_init() {
-//     use esp_idf_svc::sys::hal_driver;
-//     unsafe {
-//         hal_driver::myiic_init();
-//         hal_driver::xl9555_init();
-//         hal_driver::es8311_init(SAMPLE_RATE as i32);
-//         hal_driver::xl9555_pin_write(hal_driver::SPK_CTRL_IO as _, 1);
-//         hal_driver::es8311_set_voice_volume(75); /* 设置喇叭音量，建议不超过65 */
-//         hal_driver::es8311_set_voice_mute(0); /* 打开DAC */
-//     }
-// }
-
 unsafe fn afe_init() -> (
     *mut esp_sr::esp_afe_sr_iface_t,
     *mut esp_sr::esp_afe_sr_data_t,
@@ -315,35 +303,6 @@ pub async fn i2s_task(
     }
 }
 
-fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
-    let mut speech = false;
-    loop {
-        let result = afe_handle.fetch();
-        if let Err(_e) = &result {
-            continue;
-        }
-        let result = result.unwrap();
-        if result.data.is_empty() {
-            continue;
-        }
-
-        if result.speech {
-            speech = true;
-            log::info!("Speech detected, sending {} bytes", result.data.len());
-            tx.blocking_send(crate::app::Event::MicAudioChunk(result.data))
-                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
-            continue;
-        }
-
-        if speech {
-            log::info!("Speech ended");
-            tx.blocking_send(crate::app::Event::MicAudioEnd)
-                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
-            speech = false;
-        }
-    }
-}
-
 async fn i2s_player(
     i2s: I2S0,
     bclk: AnyIOPin,
@@ -379,7 +338,6 @@ async fn i2s_player(
     log::info!("Playing hello audio, waiting for response...");
 
     loop {
-        log::info!("speaking: {}", speaking);
         let data = if speaking {
             rx.recv().await
         } else {
@@ -448,4 +406,33 @@ async fn i2s_player(
     }
 
     // Ok(())
+}
+
+fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
+    let mut speech = false;
+    loop {
+        let result = afe_handle.fetch();
+        if let Err(_e) = &result {
+            continue;
+        }
+        let result = result.unwrap();
+        if result.data.is_empty() {
+            continue;
+        }
+
+        if result.speech {
+            speech = true;
+            log::info!("Speech detected, sending {} bytes", result.data.len());
+            tx.blocking_send(crate::app::Event::MicAudioChunk(result.data))
+                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
+            continue;
+        }
+
+        if speech {
+            log::info!("Speech ended");
+            tx.blocking_send(crate::app::Event::MicAudioEnd)
+                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
+            speech = false;
+        }
+    }
 }
