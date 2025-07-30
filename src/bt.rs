@@ -6,6 +6,7 @@ const SERVICE_ID: BleUuid = uuid128!("623fa3e2-631b-4f8f-a6e7-a7b09c03e7e0");
 const SSID_ID: BleUuid = uuid128!("1fda4d6e-2f14-42b0-96fa-453bed238375");
 const PASS_ID: BleUuid = uuid128!("a987ab18-a940-421a-a1d7-b94ee22bccbe");
 const SERVER_URL_ID: BleUuid = uuid128!("cef520a9-bcb5-4fc6-87f7-82804eee2b20");
+const BACKGROUND_GIF_ID: BleUuid = uuid128!("d1f3b2c4-5e6f-4a7b-8c9d-0e1f2a3b4c5d");
 
 pub fn bt(
     setting: Arc<Mutex<(super::Setting, esp_idf_svc::nvs::EspDefaultNvs)>>,
@@ -99,6 +100,7 @@ pub fn bt(
 
     let setting = setting.clone();
     let setting_ = setting.clone();
+    let setting_gif = setting.clone();
 
     let server_url_characteristic = service.lock().create_characteristic(
         SERVER_URL_ID,
@@ -132,6 +134,24 @@ pub fn bt(
                 log::error!("Failed to parse new server URL from bytes.");
             }
         });
+
+    let background_gif_characteristic = service
+        .lock()
+        .create_characteristic(BACKGROUND_GIF_ID, NimbleProperties::WRITE);
+    background_gif_characteristic.lock().on_write(move |args| {
+        let gif_chunk = args.recv_data();
+
+        if gif_chunk.len() <= 1024 * 1024 && gif_chunk.len() > 0 {
+            log::info!("New background GIF received, size: {}", gif_chunk.len());
+            let mut setting = setting_gif.lock().unwrap();
+            setting.0.background_gif.0.extend_from_slice(gif_chunk);
+            if gif_chunk.len() < 512 {
+                setting.0.background_gif.1 = true; // Mark as valid
+            }
+        } else {
+            log::error!("Failed to parse new background GIF from bytes.");
+        }
+    });
 
     ble_advertising.lock().set_data(
         BLEAdvertisementData::new()

@@ -16,6 +16,7 @@ struct Setting {
     ssid: String,
     pass: String,
     server_url: String,
+    background_gif: (Vec<u8>, bool), // (data, ended)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -54,13 +55,18 @@ fn main() -> anyhow::Result<()> {
         .ok()
         .flatten();
 
+    // 1MB buffer for GIF
+    let mut gif_buf = vec![0; 1024 * 1024];
+    let background_gif = nvs.get_blob("background_gif", &mut gif_buf)?;
+
     log::info!("SSID: {:?}", ssid);
     log::info!("PASS: {:?}", pass);
     log::info!("Server URL: {:?}", server_url);
 
     log_heap();
-
-    let _ = ui::backgroud();
+    if let Some(background_gif) = background_gif {
+        let _ = ui::backgroud(&background_gif);
+    }
 
     // Configures the button
     let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
@@ -78,6 +84,7 @@ fn main() -> anyhow::Result<()> {
             ssid: ssid.unwrap_or_default().to_string(),
             pass: pass.unwrap_or_default().to_string(),
             server_url: server_url.unwrap_or_default().to_string(),
+            background_gif: (Vec::with_capacity(1024 * 1024), false), // 1MB
         },
         nvs,
     )));
@@ -100,6 +107,32 @@ fn main() -> anyhow::Result<()> {
             .to_string();
         gui.display_qrcode("https://echokit.dev/setup/").unwrap();
         b.block_on(button.wait_for_falling_edge()).unwrap();
+        {
+            let mut setting = setting.lock().unwrap();
+            if setting.0.background_gif.1 {
+                gui.text = "Testing background GIF...".to_string();
+                gui.display_flush().unwrap();
+
+                let mut new_gif = Vec::new();
+                std::mem::swap(&mut setting.0.background_gif.0, &mut new_gif);
+
+                let _ = ui::backgroud(&new_gif);
+                log::info!("Background GIF set from NVS");
+
+                gui.text = "Background GIF set OK".to_string();
+                gui.display_flush().unwrap();
+
+                if !new_gif.is_empty() {
+                    setting
+                        .1
+                        .set_blob("background_gif", &new_gif)
+                        .map_err(|e| log::error!("Failed to save background GIF to NVS: {:?}", e))
+                        .unwrap();
+                    log::info!("Background GIF saved to NVS");
+                }
+            }
+        }
+
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
@@ -126,12 +159,6 @@ fn main() -> anyhow::Result<()> {
 
     let wifi = _wifi.unwrap();
     log_heap();
-
-    let r = network::http_get("http://httpbin.org/get")
-        .map_err(|e| log::error!("Failed to get httpbin: {:?}", e))
-        .ok()
-        .unwrap();
-    log::info!("HTTP GET response: {:?}", r.status());
 
     let mac = wifi.ap_netif().get_mac().unwrap();
     let mac_str = format!(
@@ -202,7 +229,7 @@ fn main() -> anyhow::Result<()> {
 
     let server = server.unwrap();
 
-    let ws_task = app::main_work(server, tx1, evt_rx);
+    let ws_task = app::main_work(server, tx1, evt_rx, background_gif);
 
     b.spawn(async move {
         loop {

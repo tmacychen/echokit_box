@@ -41,7 +41,7 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
                     log::info!("Received MicAudioEnd");
                 },
                 Event::MicAudioChunk(data)=>{
-                    log::info!("Received MicAudioChunk with {} bytes", data.len());
+                    log::debug!("Received MicAudioChunk with {} bytes", data.len());
                 },
                 Event::ServerEvent(_)=>{
                     log::info!("Received ServerEvent: {:?}", evt);
@@ -116,6 +116,7 @@ pub async fn main_work<'d>(
     mut server: Server,
     player_tx: audio::PlayerTx,
     mut evt_rx: mpsc::Receiver<Event>,
+    backgroud_buffer: Option<&'d [u8]>,
 ) -> anyhow::Result<()> {
     #[derive(PartialEq, Eq)]
     enum State {
@@ -126,7 +127,7 @@ pub async fn main_work<'d>(
         Idle,
     }
 
-    let mut gui = crate::ui::UI::default();
+    let mut gui = crate::ui::UI::new(backgroud_buffer)?;
 
     gui.state = "Idle".to_string();
     gui.display_flush().unwrap();
@@ -197,7 +198,7 @@ pub async fn main_work<'d>(
                         audio_buffer = Vec::with_capacity(8192);
                     }
                 } else {
-                    log::warn!("Received MicAudioChunk while not listening");
+                    log::debug!("Received MicAudioChunk while not listening");
                 }
             }
             Event::MicAudioEnd => {

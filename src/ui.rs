@@ -16,8 +16,6 @@ use embedded_text::TextBox;
 use esp_idf_svc::sys::EspError;
 use u8g2_fonts::U8g2TextStyle;
 
-pub const GIF_IMG: &[u8] = include_bytes!("../assets/ht.gif");
-
 pub type ColorFormat = Rgb565;
 
 #[cfg(feature = "boards")]
@@ -153,8 +151,8 @@ pub fn flush_display(color_data: &[u8], x_start: i32, y_start: i32, x_end: i32, 
     }
 }
 
-pub fn backgroud() -> Result<(), std::convert::Infallible> {
-    let image = tinygif::Gif::<ColorFormat>::from_slice(GIF_IMG).unwrap();
+pub fn backgroud(gif: &[u8]) -> Result<(), std::convert::Infallible> {
+    let image = tinygif::Gif::<ColorFormat>::from_slice(gif).unwrap();
 
     // Create a new framebuffer
     let mut display = Box::new(Framebuffer::<
@@ -169,6 +167,9 @@ pub fn backgroud() -> Result<(), std::convert::Infallible> {
     display.clear(ColorFormat::WHITE)?;
 
     for frame in image.frames() {
+        if !frame.is_transparent {
+            display.clear(ColorFormat::WHITE)?;
+        }
         frame.draw(display.as_mut())?;
         flush_display(
             display.data(),
@@ -284,82 +285,77 @@ pub struct UI {
 
 const COLOR_WIDTH: u32 = 2;
 
-impl Default for UI {
-    fn default() -> Self {
-        let mut display = Box::new(Framebuffer::<
-            ColorFormat,
-            _,
-            LittleEndian,
-            DISPLAY_WIDTH,
-            DISPLAY_HEIGHT,
-            { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
-        >::new());
+// impl Default for UI {
+//     fn default() -> Self {
+//         let mut display = Box::new(Framebuffer::<
+//             ColorFormat,
+//             _,
+//             LittleEndian,
+//             DISPLAY_WIDTH,
+//             DISPLAY_HEIGHT,
+//             { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
+//         >::new());
 
-        display.clear(ColorFormat::WHITE).unwrap();
+//         display.clear(ColorFormat::WHITE).unwrap();
 
-        let state_area = Rectangle::new(
-            display.bounding_box().top_left + Point::new(0, 0),
-            Size::new(DISPLAY_WIDTH as u32, 32),
-        );
-        let text_area = Rectangle::new(
-            display.bounding_box().top_left + Point::new(0, 32),
-            Size::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32 - 32),
-        );
+//         let state_area = Rectangle::new(
+//             display.bounding_box().top_left + Point::new(0, 0),
+//             Size::new(DISPLAY_WIDTH as u32, 32),
+//         );
+//         let text_area = Rectangle::new(
+//             display.bounding_box().top_left + Point::new(0, 32),
+//             Size::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32 - 32),
+//         );
 
-        let image = tinygif::Gif::<ColorFormat>::from_slice(GIF_IMG).unwrap();
-        for frame in image.frames() {
-            frame.draw(display.as_mut()).unwrap();
-        }
+//         let img = display.as_image();
 
-        let img = display.as_image();
+//         let state_pixels: Vec<Pixel<ColorFormat>> = state_area
+//             .into_styled(
+//                 PrimitiveStyleBuilder::new()
+//                     .stroke_color(ColorFormat::CSS_DARK_BLUE)
+//                     .stroke_width(1)
+//                     .fill_color(ColorFormat::CSS_DARK_BLUE)
+//                     .build(),
+//             )
+//             .pixels()
+//             .map(|p| {
+//                 if let Some(color) = img.pixel(p.0) {
+//                     Pixel(p.0, alpha_mix(color, p.1, ALPHA))
+//                 } else {
+//                     p
+//                 }
+//             })
+//             .collect();
 
-        let state_pixels: Vec<Pixel<ColorFormat>> = state_area
-            .into_styled(
-                PrimitiveStyleBuilder::new()
-                    .stroke_color(ColorFormat::CSS_DARK_BLUE)
-                    .stroke_width(1)
-                    .fill_color(ColorFormat::CSS_DARK_BLUE)
-                    .build(),
-            )
-            .pixels()
-            .map(|p| {
-                if let Some(color) = img.pixel(p.0) {
-                    Pixel(p.0, alpha_mix(color, p.1, ALPHA))
-                } else {
-                    p
-                }
-            })
-            .collect();
+//         let box_pixels: Vec<Pixel<ColorFormat>> = text_area
+//             .into_styled(
+//                 PrimitiveStyleBuilder::new()
+//                     .stroke_color(ColorFormat::CSS_BLACK)
+//                     .stroke_width(5)
+//                     .fill_color(ColorFormat::CSS_BLACK)
+//                     .build(),
+//             )
+//             .pixels()
+//             .map(|p| {
+//                 if let Some(color) = img.pixel(p.0) {
+//                     Pixel(p.0, alpha_mix(color, p.1, ALPHA))
+//                 } else {
+//                     p
+//                 }
+//             })
+//             .collect();
 
-        let box_pixels: Vec<Pixel<ColorFormat>> = text_area
-            .into_styled(
-                PrimitiveStyleBuilder::new()
-                    .stroke_color(ColorFormat::CSS_BLACK)
-                    .stroke_width(5)
-                    .fill_color(ColorFormat::CSS_BLACK)
-                    .build(),
-            )
-            .pixels()
-            .map(|p| {
-                if let Some(color) = img.pixel(p.0) {
-                    Pixel(p.0, alpha_mix(color, p.1, ALPHA))
-                } else {
-                    p
-                }
-            })
-            .collect();
-
-        Self {
-            state: String::new(),
-            state_background: state_pixels,
-            text: String::new(),
-            text_background: box_pixels,
-            display,
-            state_area,
-            text_area,
-        }
-    }
-}
+//         Self {
+//             state: String::new(),
+//             state_background: state_pixels,
+//             text: String::new(),
+//             text_background: box_pixels,
+//             display,
+//             state_area,
+//             text_area,
+//         }
+//     }
+// }
 
 fn alpha_mix(source: ColorFormat, target: ColorFormat, alpha: f32) -> ColorFormat {
     ColorFormat::new(

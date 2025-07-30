@@ -11,12 +11,17 @@
         body {
             background-color: #f8f9fa;
             padding-top: 20px;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
         }
 
         .card {
             border-radius: 10px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             margin-bottom: 20px;
+            background-color: rgba(255, 255, 255, 0.95);
         }
 
         .card-header {
@@ -62,6 +67,29 @@
         .btn-primary:hover {
             background-color: #4e555b;
             border-color: #4e555b;
+        }
+
+        .file-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .error-text {
+            color: #dc3545;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .bg-preview {
+            width: 100px;
+            height: 60px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-size: cover;
+            background-position: center;
+            display: none;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -126,7 +154,7 @@
                                 </div>
                             </div>
 
-                            <div class="card">
+                            <div class="card mb-3">
                                 <div class="card-header">
                                     <h5 class="mb-0">服务器URL设置</h5>
                                 </div>
@@ -142,6 +170,30 @@
                                         </button>
                                         <button class="btn btn-primary" id="writeServerUrlButton">
                                             <i class="bi bi-arrow-up-circle"></i> 写入
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="mb-0">背景图片设置</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="backgroundImage" class="form-label">选择背景图片 (GIF)</label>
+                                        <input type="file" class="form-control" id="backgroundImage" accept=".gif"
+                                            onchange="validateAndPreviewFile(this)">
+                                        <div class="file-info">只允许GIF文件，最大1MB</div>
+                                        <div id="fileError" class="error-text"></div>
+                                        <div id="bgPreview" class="bg-preview"></div>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <button class="btn btn-primary" id="writeBgButton" disabled>
+                                            <i class="bi bi-arrow-up-circle"></i> 设置背景
+                                        </button>
+                                        <button class="btn btn-secondary" id="clearBgButton">
+                                            <i class="bi bi-x-circle"></i> 清除背景
                                         </button>
                                     </div>
                                 </div>
@@ -173,6 +225,7 @@
         const SSID_ID = "1fda4d6e-2f14-42b0-96fa-453bed238375";
         const PASS_ID = "a987ab18-a940-421a-a1d7-b94ee22bccbe";
         const SERVER_URL_ID = "cef520a9-bcb5-4fc6-87f7-82804eee2b20";
+        const BACKGROUND_IMAGE_ID = "d1f3b2c4-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
 
         // 全局变量
         let device = null;
@@ -180,6 +233,7 @@
         let service = null;
         let isConnected = false;
         let toast = null;
+        let selectedBackgroundFile = null;
 
         // DOM元素
         const connectButton = document.getElementById('connectButton');
@@ -189,12 +243,18 @@
         const ssidInput = document.getElementById('ssidInput');
         const passInput = document.getElementById('passInput');
         const serverUrlInput = document.getElementById('serverUrlInput');
+        const backgroundImage = document.getElementById('backgroundImage');
+        const bgPreview = document.getElementById('bgPreview');
+        const fileError = document.getElementById('fileError');
         const readSsidButton = document.getElementById('readSsidButton');
         const writeSsidButton = document.getElementById('writeSsidButton');
         const readPassButton = document.getElementById('readPassButton');
         const writePassButton = document.getElementById('writePassButton');
         const readServerUrlButton = document.getElementById('readServerUrlButton');
         const writeServerUrlButton = document.getElementById('writeServerUrlButton');
+
+        const writeBgButton = document.getElementById('writeBgButton');
+        const clearBgButton = document.getElementById('clearBgButton');
         const notificationToast = document.getElementById('notificationToast');
         const toastTitle = document.getElementById('toastTitle');
         const toastMessage = document.getElementById('toastMessage');
@@ -213,6 +273,54 @@
             }
 
             toast.show();
+        }
+
+        // 验证并预览文件
+        function validateAndPreviewFile(input) {
+            const file = input.files[0];
+            fileError.textContent = '';
+            bgPreview.style.display = 'none';
+            writeBgButton.disabled = true;
+            selectedBackgroundFile = null;
+
+            if (file) {
+                // 检查文件类型
+                if (!file.type.startsWith('image/gif')) {
+                    fileError.textContent = '请选择GIF格式的图片文件';
+                    input.value = '';
+                    return false;
+                }
+
+                // 检查文件大小 (1MB = 1024 * 1024 bytes)
+                const maxSize = 1024 * 1024; // 1MB
+                if (file.size > maxSize) {
+                    fileError.textContent = '文件大小不能超过1MB';
+                    input.value = '';
+                    return false;
+                }
+
+                // 预览图片
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    bgPreview.style.backgroundImage = `url(${e.target.result})`;
+                    bgPreview.style.display = 'block';
+                    selectedBackgroundFile = file;
+                    writeBgButton.disabled = false;
+                };
+                reader.readAsDataURL(file);
+            }
+            return true;
+        }
+
+        // 应用背景图片
+        function applyBackgroundImage(imageDataUrl) {
+            document.body.style.backgroundImage = `url(${imageDataUrl})`;
+        }
+
+        // 清除背景图片
+        function clearBackgroundImage() {
+            document.body.style.backgroundImage = '';
+            document.body.style.backgroundColor = '#f8f9fa';
         }
 
         // 连接设备
@@ -332,6 +440,80 @@
             }
         }
 
+        // 写入背景图片数据（分块传输）
+        async function writeBackgroundImage() {
+            if (!isConnected || !service) {
+                showNotification('错误', '设备未连接', true);
+                return;
+            }
+
+            if (!selectedBackgroundFile) {
+                showNotification('错误', '请先选择背景图片', true);
+                return;
+            }
+
+            try {
+                const characteristic = await service.getCharacteristic(BACKGROUND_IMAGE_ID);
+
+                // 读取文件为ArrayBuffer
+                const arrayBuffer = await selectedBackgroundFile.arrayBuffer();
+                const totalSize = arrayBuffer.byteLength;
+                const chunkSize = 512; // BLE写入限制为512字节
+                const totalChunks = Math.ceil(totalSize / chunkSize);
+
+                showNotification('信息', `开始传输图片，共${totalChunks}个数据包...`);
+
+                // 禁用按钮防止重复点击
+                writeBgButton.disabled = true;
+                writeBgButton.innerHTML = '<i class="bi bi-hourglass-split"></i> 传输中...';
+
+                // 分块传输
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * chunkSize;
+                    const end = Math.min(start + chunkSize, totalSize);
+                    const chunk = arrayBuffer.slice(start, end);
+
+
+
+                    // 合并包头和数据
+                    const packet = new Uint8Array(chunk.byteLength);
+                    packet.set(new Uint8Array(chunk), 0);
+
+                    // 写入数据包
+                    await characteristic.writeValue(packet);
+
+                    // 更新进度
+                    const progress = Math.round(((i + 1) / totalChunks) * 100);
+                    writeBgButton.innerHTML = `<i class="bi bi-hourglass-split"></i> 传输中... ${progress}%`;
+
+                    // 小延时确保设备有足够时间处理
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                }
+
+                // 应用背景图片
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    applyBackgroundImage(e.target.result);
+                };
+                reader.readAsDataURL(selectedBackgroundFile);
+
+                // 恢复按钮状态
+                writeBgButton.disabled = false;
+                writeBgButton.innerHTML = '<i class="bi bi-arrow-up-circle"></i> 设置背景';
+
+                showNotification('成功', `背景图片设置成功！传输了${totalChunks}个数据包，总大小${Math.round(totalSize / 1024)}KB`);
+
+            } catch (error) {
+                console.error('写入背景图片失败:', error);
+
+                // 恢复按钮状态
+                writeBgButton.disabled = false;
+                writeBgButton.innerHTML = '<i class="bi bi-arrow-up-circle"></i> 设置背景';
+
+                showNotification('错误', '写入背景图片失败: ' + error.message, true);
+            }
+        }
+
         // 事件监听
         connectButton.addEventListener('click', async () => {
             if (!isConnected) {
@@ -363,6 +545,15 @@
 
         writeServerUrlButton.addEventListener('click', () => {
             writeCharacteristic(SERVER_URL_ID, serverUrlInput.value);
+        });
+
+        writeBgButton.addEventListener('click', () => {
+            writeBackgroundImage();
+        });
+
+        clearBgButton.addEventListener('click', () => {
+            clearBackgroundImage();
+            showNotification('信息', '背景图片已清除');
         });
 
         // 检查浏览器是否支持Web Bluetooth API
