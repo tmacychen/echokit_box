@@ -1,5 +1,5 @@
 [package]
-name = "echokit-box"
+name = "echokit"
 version = "0.1.0"
 authors = ["csh <458761603@qq.com>"]
 edition = "2021"
@@ -7,8 +7,8 @@ resolver = "2"
 rust-version = "1.77"
 
 [[bin]]
-name = "echokit-box"
-harness = false      # do not use the built in cargo test harness -> resolve rust-analyzer errors
+name = "echokit"
+harness = false             # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]
 opt-level = "s"
@@ -18,9 +18,12 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [features]
-default = []
+default = ["boards"]
 
 experimental = ["esp-idf-svc/experimental"]
+
+boards = []
+box = []
 
 [dependencies]
 log = "0.4"

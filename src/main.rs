@@ -4,6 +4,8 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 
 mod app;
 mod audio;
+mod bt;
+mod hal;
 mod network;
 mod protocol;
 mod ui;
@@ -14,153 +16,7 @@ struct Setting {
     ssid: String,
     pass: String,
     server_url: String,
-}
-
-mod bt {
-    use std::sync::{Arc, Mutex};
-
-    use esp32_nimble::{utilities::BleUuid, uuid128, BLEAdvertisementData, NimbleProperties};
-
-    const SERVICE_ID: BleUuid = uuid128!("623fa3e2-631b-4f8f-a6e7-a7b09c03e7e0");
-    const SSID_ID: BleUuid = uuid128!("1fda4d6e-2f14-42b0-96fa-453bed238375");
-    const PASS_ID: BleUuid = uuid128!("a987ab18-a940-421a-a1d7-b94ee22bccbe");
-    const SERVER_URL_ID: BleUuid = uuid128!("cef520a9-bcb5-4fc6-87f7-82804eee2b20");
-
-    pub fn bt(
-        setting: Arc<Mutex<(super::Setting, esp_idf_svc::nvs::EspDefaultNvs)>>,
-    ) -> anyhow::Result<()> {
-        let ble_device = esp32_nimble::BLEDevice::take();
-        let ble_addr = ble_device.get_addr()?.to_string();
-        let ble_advertising = ble_device.get_advertising();
-
-        let server = ble_device.get_server();
-        server.on_connect(|server, desc| {
-            log::info!("Client connected: {:?}", desc);
-
-            server
-                .update_conn_params(desc.conn_handle(), 24, 48, 0, 60)
-                .unwrap();
-
-            if server.connected_count() < (esp_idf_svc::sys::CONFIG_BT_NIMBLE_MAX_CONNECTIONS as _)
-            {
-                log::info!("Multi-connect support: start advertising");
-                ble_advertising.lock().start().unwrap();
-            }
-        });
-
-        server.on_disconnect(|_desc, reason| {
-            log::info!("Client disconnected ({:?})", reason);
-        });
-
-        let service = server.create_service(SERVICE_ID);
-
-        let setting1 = setting.clone();
-        let setting2 = setting.clone();
-
-        let ssid_characteristic = service
-            .lock()
-            .create_characteristic(SSID_ID, NimbleProperties::READ | NimbleProperties::WRITE);
-        ssid_characteristic
-            .lock()
-            .on_read(move |c, _| {
-                log::info!("Read from SSID characteristic");
-                let setting = setting1.lock().unwrap();
-                c.set_value(setting.0.ssid.as_bytes());
-            })
-            .on_write(move |args| {
-                log::info!(
-                    "Wrote to SSID characteristic: {:?} -> {:?}",
-                    args.current_data(),
-                    args.recv_data()
-                );
-                if let Ok(new_ssid) = String::from_utf8(args.recv_data().to_vec()) {
-                    log::info!("New SSID: {}", new_ssid);
-                    let mut setting = setting2.lock().unwrap();
-                    if let Err(e) = setting.1.set_str("ssid", &new_ssid) {
-                        log::error!("Failed to save SSID to NVS: {:?}", e);
-                    } else {
-                        setting.0.ssid = new_ssid;
-                    }
-                } else {
-                    log::error!("Failed to parse new SSID from bytes.");
-                }
-            });
-
-        let setting1 = setting.clone();
-        let setting2 = setting.clone();
-        let pass_characteristic = service
-            .lock()
-            .create_characteristic(PASS_ID, NimbleProperties::READ | NimbleProperties::WRITE);
-        pass_characteristic
-            .lock()
-            .on_read(move |c, _| {
-                log::info!("Read from pass characteristic");
-                let setting = setting1.lock().unwrap();
-                c.set_value(setting.0.pass.as_bytes());
-            })
-            .on_write(move |args| {
-                log::info!(
-                    "Wrote to pass characteristic: {:?} -> {:?}",
-                    args.current_data(),
-                    args.recv_data()
-                );
-                if let Ok(new_pass) = String::from_utf8(args.recv_data().to_vec()) {
-                    log::info!("New pass: {}", new_pass);
-                    let mut setting = setting2.lock().unwrap();
-                    if let Err(e) = setting.1.set_str("pass", &new_pass) {
-                        log::error!("Failed to save pass to NVS: {:?}", e);
-                    } else {
-                        setting.0.pass = new_pass;
-                    }
-                } else {
-                    log::error!("Failed to parse new pass from bytes.");
-                }
-            });
-
-        let setting = setting.clone();
-        let setting_ = setting.clone();
-
-        let server_url_characteristic = service.lock().create_characteristic(
-            SERVER_URL_ID,
-            NimbleProperties::READ | NimbleProperties::WRITE,
-        );
-        server_url_characteristic
-            .lock()
-            .on_read(move |c, _| {
-                log::info!("Read from server URL characteristic");
-                let setting = setting.lock().unwrap();
-                c.set_value(setting.0.server_url.as_bytes());
-            })
-            .on_write(move |args| {
-                log::info!(
-                    "Wrote to server URL characteristic: {:?} -> {:?}",
-                    args.current_data(),
-                    args.recv_data()
-                );
-                if let Ok(mut new_server_url) = String::from_utf8(args.recv_data().to_vec()) {
-                    log::info!("New server URL: {}", new_server_url);
-                    if !new_server_url.ends_with("/") {
-                        new_server_url.push('/');
-                    }
-                    let mut setting = setting_.lock().unwrap();
-                    if let Err(e) = setting.1.set_str("server_url", &new_server_url) {
-                        log::error!("Failed to save server URL to NVS: {:?}", e);
-                    } else {
-                        setting.0.server_url = new_server_url;
-                    }
-                } else {
-                    log::error!("Failed to parse new server URL from bytes.");
-                }
-            });
-
-        ble_advertising.lock().set_data(
-            BLEAdvertisementData::new()
-                .name(&format!("GAIA-ESP32-{}", ble_addr))
-                .add_service_uuid(SERVICE_ID),
-        )?;
-        ble_advertising.lock().start()?;
-        Ok(())
-    }
+    background_gif: (Vec<u8>, bool), // (data, ended)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -174,8 +30,8 @@ fn main() -> anyhow::Result<()> {
 
     log_heap();
 
-    audio::audio_init();
-    ui::lcd_init();
+    crate::hal::audio_init();
+    ui::lcd_init().unwrap();
 
     log_heap();
     let mut ssid_buf = [0; 32];
@@ -199,21 +55,31 @@ fn main() -> anyhow::Result<()> {
         .ok()
         .flatten();
 
+    // 1MB buffer for GIF
+    let mut gif_buf = vec![0; 1024 * 1024];
+    let background_gif = nvs.get_blob("background_gif", &mut gif_buf)?;
+
     log::info!("SSID: {:?}", ssid);
     log::info!("PASS: {:?}", pass);
     log::info!("Server URL: {:?}", server_url);
-    log_heap();
 
-    let _ = ui::backgroud();
+    log_heap();
+    if let Some(background_gif) = background_gif {
+        let _ = ui::backgroud(&background_gif);
+    } else {
+        let mut ui = ui::UI::new(None).unwrap();
+        ui.text = "You can hold K0 goto setup page".to_string();
+        for i in 0..3 {
+            ui.state = format!("Device starting... {}", 3 - i);
+            ui.display_flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
 
     // Configures the button
     let mut button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio0)?;
     button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
     button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::PosEdge)?;
-
-    let mut ex_button = esp_idf_svc::hal::gpio::PinDriver::input(peripherals.pins.gpio3)?;
-    ex_button.set_pull(esp_idf_svc::hal::gpio::Pull::Up)?;
-    ex_button.set_interrupt_type(esp_idf_svc::hal::gpio::InterruptType::NegEdge)?;
 
     let b = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -226,6 +92,7 @@ fn main() -> anyhow::Result<()> {
             ssid: ssid.unwrap_or_default().to_string(),
             pass: pass.unwrap_or_default().to_string(),
             server_url: server_url.unwrap_or_default().to_string(),
+            background_gif: (Vec::with_capacity(1024 * 1024), false), // 1MB
         },
         nvs,
     )));
@@ -248,6 +115,32 @@ fn main() -> anyhow::Result<()> {
             .to_string();
         gui.display_qrcode("https://echokit.dev/setup/").unwrap();
         b.block_on(button.wait_for_falling_edge()).unwrap();
+        {
+            let mut setting = setting.lock().unwrap();
+            if setting.0.background_gif.1 {
+                gui.text = "Testing background GIF...".to_string();
+                gui.display_flush().unwrap();
+
+                let mut new_gif = Vec::new();
+                std::mem::swap(&mut setting.0.background_gif.0, &mut new_gif);
+
+                let _ = ui::backgroud(&new_gif);
+                log::info!("Background GIF set from NVS");
+
+                gui.text = "Background GIF set OK".to_string();
+                gui.display_flush().unwrap();
+
+                if !new_gif.is_empty() {
+                    setting
+                        .1
+                        .set_blob("background_gif", &new_gif)
+                        .map_err(|e| log::error!("Failed to save background GIF to NVS: {:?}", e))
+                        .unwrap();
+                    log::info!("Background GIF saved to NVS");
+                }
+            }
+        }
+
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 
@@ -281,26 +174,53 @@ fn main() -> anyhow::Result<()> {
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     );
 
-    let bclk = peripherals.pins.gpio21;
-    let din = peripherals.pins.gpio47;
-    let dout = peripherals.pins.gpio14;
-    let ws = peripherals.pins.gpio13;
-
     let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(64);
     let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
 
-    let i2s_task = audio::i2s_task(
-        peripherals.i2s0,
-        bclk.into(),
-        din.into(),
-        dout.into(),
-        ws.into(),
-        (evt_tx.clone(), rx1),
-    );
+    #[cfg(feature = "box")]
+    let i2s_task = {
+        let bclk = peripherals.pins.gpio21;
+        let din = peripherals.pins.gpio47;
+        let dout = peripherals.pins.gpio14;
+        let ws = peripherals.pins.gpio13;
+
+        audio::i2s_task(
+            peripherals.i2s0,
+            bclk.into(),
+            din.into(),
+            dout.into(),
+            ws.into(),
+            (evt_tx.clone(), rx1),
+        )
+    };
+
+    #[cfg(feature = "boards")]
+    let i2s_task = {
+        let sck = peripherals.pins.gpio5;
+        let din = peripherals.pins.gpio6;
+        let dout = peripherals.pins.gpio7;
+        let ws = peripherals.pins.gpio4;
+        let bclk = peripherals.pins.gpio15;
+        let lrclk = peripherals.pins.gpio16;
+
+        audio::i2s_task_(
+            peripherals.i2s0,
+            ws.into(),
+            sck.into(),
+            din.into(),
+            peripherals.i2s1,
+            bclk.into(),
+            lrclk.into(),
+            dout.into(),
+            (evt_tx.clone(), rx1),
+        )
+    };
 
     gui.state = "Connecting to server...".to_string();
     gui.text.clear();
     gui.display_flush().unwrap();
+
+    log_heap();
 
     let server_url = {
         let setting = setting.lock().unwrap();
@@ -317,9 +237,7 @@ fn main() -> anyhow::Result<()> {
 
     let server = server.unwrap();
 
-    let ex_evt_tx = evt_tx.clone();
-
-    let ws_task = app::main_work(server, tx1, evt_rx);
+    let ws_task = app::main_work(server, tx1, evt_rx, background_gif);
 
     b.spawn(async move {
         loop {
@@ -355,37 +273,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
-    b.spawn(async move {
-        loop {
-            let _ = ex_button.wait_for_falling_edge().await;
-            let r = unsafe { esp_idf_svc::sys::hal_driver::xl9555_key_scan(0) } as u32;
-            match r {
-                esp_idf_svc::sys::hal_driver::KEY0_PRES => {
-                    log::info!("KEY1_PRES");
-                    if ex_evt_tx
-                        .send(app::Event::Event(app::Event::K1))
-                        .await
-                        .is_err()
-                    {
-                        log::error!("Failed to send K1 event");
-                        break;
-                    }
-                }
-                esp_idf_svc::sys::hal_driver::KEY1_PRES => {
-                    log::info!("KEY2_PRES");
-                    if ex_evt_tx
-                        .send(app::Event::Event(app::Event::K2))
-                        .await
-                        .is_err()
-                    {
-                        log::error!("Failed to send K2 event");
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
+
     b.spawn(i2s_task);
     b.block_on(async move {
         let r = ws_task.await;
@@ -404,11 +292,11 @@ pub fn log_heap() {
         use esp_idf_svc::sys::{heap_caps_get_free_size, MALLOC_CAP_INTERNAL, MALLOC_CAP_SPIRAM};
 
         log::info!(
-            "Free heap size: {}",
+            "Free SPIRAM heap size: {}",
             heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
         );
         log::info!(
-            "Free internal heap size: {}",
+            "Free INTERNAL heap size: {}",
             heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
         );
     }
