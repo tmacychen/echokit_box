@@ -12,7 +12,7 @@ unsafe fn afe_init() -> (
     *mut esp_sr::esp_afe_sr_iface_t,
     *mut esp_sr::esp_afe_sr_data_t,
 ) {
-    let models = esp_sr::esp_srmodel_init("model\0".as_ptr() as *const i8);
+    let models = esp_sr::esp_srmodel_init("model\0".as_ptr() as *const _);
     let afe_config = esp_sr::afe_config_init(
         "M\0".as_ptr() as _,
         models,
