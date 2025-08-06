@@ -10,3 +10,4 @@ espup install
 
 cargo install --locked espflash
 cargo install --locked ldproxy
+cargo install --locked esp-generate
