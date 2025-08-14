@@ -37,7 +37,9 @@ cargo build  --no-default-features --features box
 
 ## Upload firmware
 
-You MUST connect the computer to the SLAVE USB port on the device. Allow the computer to accept connection from the device. The detected USB serial port must be `JTAG`. IT CANNOT be `USB Single`.
+Connect to your computer to the EchoKit device USB port labeled `TTL`. Allow the computer to accept connection from the device when prompted. 
+
+> On many devices, there are two USB ports, but only the `SLAVE` port can take commands from another computer. You must connect to that `SLAVE` USB port. The detected USB serial port should be `JTAG`. IT CANNOT be `USB Single`.
 
 ```
 espflash flash --monitor --flash-size 16mb echokit
