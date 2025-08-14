@@ -1,5 +1,13 @@
 # Setup the EchoKit device
 
+## Buttons on the device
+
+The `RST` button is to restart the system. On the EchoKit devkit, it is labeled as `rst` on the main ESP32 board.
+
+The `K0` button is the main action button for the application. On the EchoKit devkit, it is the single button to the left of the LCD screen on the extension board.
+
+> The `boot` button on the ESP32 board is the SAME as the `K0` button.
+
 ## Build espflash
 
 Assume that you [installed the Rust compiler](https://www.rust-lang.org/tools/install) on your computer.
@@ -64,6 +72,8 @@ I (705) boot: Loaded app from partition at offset 0x10000
 I (705) boot: Disabling RNG early entropy source...
 I (716) cpu_start: Multicore app
 ```
+
+> If you have problem with flashing, try press down the `RST` button and, at the same time, press and release the `boot` (or `K0`) button. The device should enter into a special mode and be ready for flashing. 
 
 ## Reset the device
 
