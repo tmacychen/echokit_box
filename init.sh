@@ -3,8 +3,10 @@
 cd $HOME
 
 # install rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source $HOME/.cargo/env
+if ! command -v rustc &> /dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source $HOME/.cargo/env
+fi
 
 # Initialize the ESP development environment
 # https://narukara.github.io/rust-on-esp-book-zh-cn
