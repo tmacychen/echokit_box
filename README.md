@@ -24,13 +24,14 @@ Get a pre-compiled binary version of the firmware.
 curl -L -o echokit https://echokit.dev/firmware/echokit-boards
 ```
 
-To build the `echokit` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/release/`.
+To build the `echokit` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/xtensa-esp32s3-espidf/release/`.
 
 ```
 cargo build --release
 ```
 
-### Alternative firmware
+<details>
+<summary> Alternative firmware </summary>
 
 If you have the fully integrared box device, you can use the following command to download a pre-built binary.
 
@@ -42,6 +43,8 @@ To build it from the Rust source code.
 ```
 cargo build  --no-default-features --features box
 ```
+
+</details>
 
 ## Upload firmware
 
