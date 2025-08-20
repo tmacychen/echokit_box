@@ -114,6 +114,22 @@ fn main() -> anyhow::Result<()> {
         gui.text = "Goto https://echokit.dev/setup/ to set up the device.\nPress K0 to continue"
             .to_string();
         gui.display_qrcode("https://echokit.dev/setup/").unwrap();
+
+        #[cfg(feature = "boards")]
+        {
+            let dout = peripherals.pins.gpio7;
+            let bclk = peripherals.pins.gpio15;
+            let lrclk = peripherals.pins.gpio16;
+            audio::player_welcome(
+                peripherals.i2s0,
+                bclk.into(),
+                dout.into(),
+                lrclk.into(),
+                None,
+                None,
+            );
+        }
+
         b.block_on(button.wait_for_falling_edge()).unwrap();
         {
             let mut setting = setting.lock().unwrap();

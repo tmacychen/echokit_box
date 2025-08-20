@@ -436,3 +436,34 @@ fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
         }
     }
 }
+
+const WELCOME_WAV: &[u8] = include_bytes!("../assets/welcome.wav");
+
+pub fn player_welcome(
+    i2s: I2S0,
+    bclk: AnyIOPin,
+    dout: AnyIOPin,
+    lrclk: AnyIOPin,
+    mclk: Option<AnyIOPin>,
+    data: Option<&[u8]>,
+) {
+    let i2s_config = config::StdConfig::new(
+        config::Config::default().auto_clear(true),
+        config::StdClkConfig::from_sample_rate_hz(SAMPLE_RATE),
+        config::StdSlotConfig::philips_slot_default(
+            config::DataBitWidth::Bits16,
+            config::SlotMode::Mono,
+        ),
+        config::StdGpioConfig::default(),
+    );
+
+    let mut tx_driver = I2sDriver::new_std_tx(i2s, &i2s_config, bclk, dout, mclk, lrclk).unwrap();
+
+    tx_driver.tx_enable().unwrap();
+
+    if let Some(data) = data {
+        tx_driver.write_all(data, 1000).unwrap();
+    } else {
+        tx_driver.write_all(WELCOME_WAV, 1000).unwrap();
+    }
+}
