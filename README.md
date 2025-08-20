@@ -8,7 +8,7 @@ The `K0` button is the main action button for the application. On the EchoKit de
 
 > The `boot` button on the ESP32 board is the SAME as the `K0` button.
 
-## Build espflash
+## Install espflash
 
 Assume that you [installed the Rust compiler](https://www.rust-lang.org/tools/install) on your computer.
 
@@ -16,18 +16,30 @@ Assume that you [installed the Rust compiler](https://www.rust-lang.org/tools/in
 cargo install cargo-espflash espflash ldproxy
 ```
 
-## Get firmware
+## Build the firmware
 
-Get a pre-compiled binary version of the firmware.
+Get a pre-compiled binary version of the firmware. The firmware binary file is `echokit`.
 
 ```
 curl -L -o echokit https://echokit.dev/firmware/echokit-boards
+```
+
+Optional: You could also get an image of the firmware, which can be flashed to the device using the [ESP Launchpad](https://espressif.github.io/esp-launchpad/). The image binary file is `echokit.bin`.
+
+```
+curl -L -o echokit.bin https://echokit.dev/firmware/echokit-boards.bin
 ```
 
 To build the `echokit` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/xtensa-esp32s3-espidf/release/`.
 
 ```
 cargo build --release
+```
+
+Optional: Build the device image.
+
+```
+espflash save-image --chip esp32s3 --merge --flash-size 16mb target/xtensa-esp32s3-espidf/release/echokit echokit.bin
 ```
 
 <details>
@@ -38,6 +50,7 @@ If you have the fully integrared box device, you can use the following command t
 ```
 curl -L -o echokit https://echokit.dev/firmware/echokit-box
 ```
+
 To build it from the Rust source code. 
 
 ```
@@ -46,7 +59,7 @@ cargo build  --no-default-features --features box
 
 </details>
 
-## Upload firmware
+## Flash the firmware
 
 Connect to your computer to the EchoKit device USB port labeled `TTL`. Allow the computer to accept connection from the device when prompted. 
 
@@ -77,6 +90,8 @@ I (716) cpu_start: Multicore app
 ```
 
 > If you have problem with flashing, try press down the `RST` button and, at the same time, press and release the `boot` (or `K0`) button. The device should enter into a special mode and be ready for flashing. 
+
+Alternatively, you could flash the `echokit.bin` device image using the web-based [ESP Launchpad](https://espressif.github.io/esp-launchpad/) tool.
 
 ## Reset the device
 
