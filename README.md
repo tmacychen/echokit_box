@@ -8,6 +8,21 @@ The `K0` button is the main action button for the application. On the EchoKit de
 
 > The `boot` button on the ESP32 board is the SAME as the `K0` button.
 
+## Quick start
+
+Get an image of the firmware.
+
+```
+curl -L -o echokit.bin https://echokit.dev/firmware/echokit-boards.bin
+```
+
+Flash the `echokit.bin` device image using the web-based [ESP Launchpad](https://espressif.github.io/esp-launchpad/) tool.
+
+* Upload the `echokit.bin` file under the **DIY** tab. Make sure that the **flash address** is `0x0`.
+* Attach your EchoKit device to the computer using USB. Allow the computer to access the device when prompted.
+* Click on the **Connect** tab to connect to the EchoKit device.
+* Flash the firmware to the device!
+
 ## Install espflash
 
 Assume that you [installed the Rust compiler](https://www.rust-lang.org/tools/install) on your computer.
@@ -22,12 +37,6 @@ Get a pre-compiled binary version of the firmware. The firmware binary file is `
 
 ```
 curl -L -o echokit https://echokit.dev/firmware/echokit-boards
-```
-
-Optional: You could also get an image of the firmware, which can be flashed to the device using the [ESP Launchpad](https://espressif.github.io/esp-launchpad/). The image binary file is `echokit.bin`.
-
-```
-curl -L -o echokit.bin https://echokit.dev/firmware/echokit-boards.bin
 ```
 
 To build the `echokit` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/xtensa-esp32s3-espidf/release/`.
@@ -90,8 +99,6 @@ I (716) cpu_start: Multicore app
 ```
 
 > If you have problem with flashing, try press down the `RST` button and, at the same time, press and release the `boot` (or `K0`) button. The device should enter into a special mode and be ready for flashing. 
-
-Alternatively, you could flash the `echokit.bin` device image using the web-based [ESP Launchpad](https://espressif.github.io/esp-launchpad/) tool.
 
 ## Reset the device
 
