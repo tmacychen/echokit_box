@@ -1,5 +1,13 @@
 # Setup the EchoKit device
 
+## Buttons on the device
+
+The `RST` button is to restart the system. On the EchoKit devkit, it is labeled as `rst` on the main ESP32 board.
+
+The `K0` button is the main action button for the application. On the EchoKit devkit, it is the single button to the left of the LCD screen on the extension board.
+
+> The `boot` button on the ESP32 board is the SAME as the `K0` button.
+
 ## Build espflash
 
 Assume that you [installed the Rust compiler](https://www.rust-lang.org/tools/install) on your computer.
@@ -16,13 +24,14 @@ Get a pre-compiled binary version of the firmware.
 curl -L -o echokit https://echokit.dev/firmware/echokit-boards
 ```
 
-To build the `echokit` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/release/`.
+To build the `echokit` firmware file from source, you need to make sure that you install the [OS-specific dependencies](https://docs.espressif.com/projects/rust/book/installation/std-requirements.html) and then [ESP toolchain for Rust](https://docs.espressif.com/projects/rust/book/installation/riscv-and-xtensa.html). You can then build from the source and find the binary firmware in `target/xtensa-esp32s3-espidf/release/`.
 
 ```
 cargo build --release
 ```
 
-### Alternative firmware
+<details>
+<summary> Alternative firmware </summary>
 
 If you have the fully integrared box device, you can use the following command to download a pre-built binary.
 
@@ -35,9 +44,13 @@ To build it from the Rust source code.
 cargo build  --no-default-features --features box
 ```
 
+</details>
+
 ## Upload firmware
 
-You MUST connect the computer to the SLAVE USB port on the device. Allow the computer to accept connection from the device. The detected USB serial port must be `JTAG`. IT CANNOT be `USB Single`.
+Connect to your computer to the EchoKit device USB port labeled `TTL`. Allow the computer to accept connection from the device when prompted. 
+
+> On many devices, there are two USB ports, but only the `SLAVE` port can take commands from another computer. You must connect to that `SLAVE` USB port. The detected USB serial port should be `JTAG`. IT CANNOT be `USB Single`.
 
 ```
 espflash flash --monitor --flash-size 16mb echokit
@@ -62,6 +75,8 @@ I (705) boot: Loaded app from partition at offset 0x10000
 I (705) boot: Disabling RNG early entropy source...
 I (716) cpu_start: Multicore app
 ```
+
+> If you have problem with flashing, try press down the `RST` button and, at the same time, press and release the `boot` (or `K0`) button. The device should enter into a special mode and be ready for flashing. 
 
 ## Reset the device
 
