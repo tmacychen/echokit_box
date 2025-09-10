@@ -1,9 +1,16 @@
-use std::sync::Arc;
+use std::sync::{Arc, AtomicBool};
+use std::sync::atomic::Ordering;
 
 use esp_idf_svc::hal::gpio::AnyIOPin;
 use esp_idf_svc::hal::i2s::{config, I2sDriver, I2S0, I2S1};
 
 use esp_idf_svc::sys::esp_sr;
+
+// 唤醒词检测状态
+enum WakeWordState {
+    Idle,
+    Listening,
+}
 
 const SAMPLE_RATE: u32 = 16000;
 const PORT_TICK_PERIOD_MS: u32 = 1000 / esp_idf_svc::sys::configTICK_RATE_HZ;
@@ -14,7 +21,7 @@ unsafe fn afe_init() -> (
 ) {
     let models = esp_sr::esp_srmodel_init("model\0".as_ptr() as *const _);
     let afe_config = esp_sr::afe_config_init(
-        "M\0".as_ptr() as _,
+        "M\0".as_ptr() as _, 
         models,
         esp_sr::afe_type_t_AFE_TYPE_VC,
         esp_sr::afe_mode_t_AFE_MODE_HIGH_PERF,
@@ -28,6 +35,19 @@ unsafe fn afe_init() -> (
     afe_config.vad_min_noise_ms = 500;
     afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_1;
     afe_config.agc_init = true;
+    
+    // 启用唤醒词检测
+    // 这里使用默认唤醒词模型(0表示默认的"hi esp")
+    afe_config.wakenet_init = true;
+    afe_config.wakenet_model = 0;
+    // 高性能模式
+    afe_config.wakenet_mode = esp_sr::wn_mode_t_WN_MODE_HIGH_PERF;
+    
+    // 如果需要配置自定义唤醒词，可以取消下面的注释
+    // 例如，使用第二个唤醒词("stop", ID=2)
+    // afe_config.wakenet_init = true;
+    // afe_config.wakenet_model = 1;  // 使用第二个唤醒词模型
+    // afe_config.wakenet_mode = esp_sr::wn_mode_t_WN_MODE_HIGH_PERF;
 
     log::info!("{afe_config:?}");
 
@@ -49,6 +69,8 @@ struct AFE {
     data: *mut esp_sr::esp_afe_sr_data_t,
     #[allow(unused)]
     feed_chunksize: usize,
+    // 用于跟踪唤醒词检测状态
+    state: Arc<AtomicBool>,
 }
 
 unsafe impl Send for AFE {}
@@ -57,23 +79,44 @@ unsafe impl Sync for AFE {}
 struct AFEResult {
     data: Vec<u8>,
     speech: bool,
+    wake_word_detected: bool,
+    wake_word_id: i32,
 }
 
 impl AFE {
     fn new() -> Self {
         unsafe {
             let (handle, data) = afe_init();
-            let feed_chunksize =
+            let feed_chunksize = 
                 (handle.as_mut().unwrap().get_feed_chunksize.unwrap())(data) as usize;
+
+            // 初始状态为idle
+            let state = Arc::new(AtomicBool::new(false));
 
             AFE {
                 handle,
                 data,
                 feed_chunksize,
+                state,
             }
         }
     }
     // returns the number of bytes fed
+    
+    // 设置为监听状态
+    pub fn set_listening(&self) {
+        self.state.store(true, Ordering::Relaxed);
+    }
+    
+    // 设置为空闲状态
+    pub fn set_idle(&self) {
+        self.state.store(false, Ordering::Relaxed);
+    }
+    
+    // 检查是否处于监听状态
+    pub fn is_listening(&self) -> bool {
+        self.state.load(Ordering::Relaxed);
+    }
 
     #[allow(dead_code)]
     fn reset(&self) {
@@ -106,6 +149,7 @@ impl AFE {
 
             let data_size = result.data_size;
             let vad_state = result.vad_state;
+            let wakeup_state = result.wakeup_state;
             let mut data = Vec::with_capacity(data_size as usize + result.vad_cache_size as usize);
             if result.vad_cache_size > 0 {
                 let data_ptr = result.vad_cache as *const u8;
@@ -119,7 +163,17 @@ impl AFE {
             };
 
             let speech = vad_state == esp_sr::vad_state_t_VAD_SPEECH;
-            Ok(AFEResult { data, speech })
+            
+            // 检查是否检测到唤醒词
+            let wake_word_detected = wakeup_state != 0;
+            let wake_word_id = wakeup_state;
+            
+            Ok(AFEResult { 
+                data, 
+                speech, 
+                wake_word_detected, 
+                wake_word_id 
+            })
         }
     }
 }
@@ -150,8 +204,8 @@ pub async fn i2s_task_(
     lrclk: AnyIOPin,
     dout: AnyIOPin,
     (tx, rx): (MicTx, PlayerRx),
+    afe_handle: Arc<AFE>, // 添加AFE实例参数
 ) {
-    let afe_handle = Arc::new(AFE::new());
     let afe_handle_ = afe_handle.clone();
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
     let r = i2s_player_(i2s, ws, sck, din, i2s1, bclk, lrclk, dout, afe_handle, rx).await;
@@ -285,8 +339,8 @@ pub async fn i2s_task(
     dout: AnyIOPin,
     ws: AnyIOPin,
     (tx, rx): (MicTx, PlayerRx),
+    afe_handle: Arc<AFE>, // 添加AFE实例参数
 ) {
-    let afe_handle = Arc::new(AFE::new());
     let afe_handle_ = afe_handle.clone();
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
     let r = i2s_player(i2s, bclk, din, dout, ws, afe_handle, rx).await;
@@ -420,7 +474,17 @@ fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
             continue;
         }
 
-        if result.speech {
+        // 处理唤醒词检测
+        if result.wake_word_detected {
+            log::info!("Wake word detected with ID: {}", result.wake_word_id);
+            
+            // 发送唤醒词检测事件到app.rs
+            tx.blocking_send(crate::app::Event::WakeWordDetected(result.wake_word_id))
+                .map_err(|_| anyhow::anyhow!("Failed to send wake word event"))?;
+        }
+
+        // 只有在检测到语音且有数据时才发送音频数据
+        if result.speech && !result.data.is_empty() {
             speech = true;
             log::debug!("Speech detected, sending {} bytes", result.data.len());
             tx.blocking_send(crate::app::Event::MicAudioChunk(result.data))

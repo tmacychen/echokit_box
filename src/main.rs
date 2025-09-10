@@ -193,6 +193,10 @@ fn main() -> anyhow::Result<()> {
     let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(64);
     let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
 
+    // 创建AFE实例
+    let afe_handle = std::sync::Arc::new(audio::AFE::new());
+    let afe_handle_clone = afe_handle.clone();
+
     #[cfg(feature = "box")]
     let i2s_task = {
         let bclk = peripherals.pins.gpio21;
@@ -207,6 +211,7 @@ fn main() -> anyhow::Result<()> {
             dout.into(),
             ws.into(),
             (evt_tx.clone(), rx1),
+            afe_handle_clone.clone(), // 传递AFE实例
         )
     };
 
@@ -229,6 +234,7 @@ fn main() -> anyhow::Result<()> {
             lrclk.into(),
             dout.into(),
             (evt_tx.clone(), rx1),
+            afe_handle_clone.clone(), // 传递AFE实例
         )
     };
 
@@ -253,7 +259,7 @@ fn main() -> anyhow::Result<()> {
 
     let server = server.unwrap();
 
-    let ws_task = app::main_work(server, tx1, evt_rx, background_gif);
+    let ws_task = app::main_work(server, tx1, evt_rx, background_gif, afe_handle);
 
     b.spawn(async move {
         loop {

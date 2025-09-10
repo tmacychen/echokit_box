@@ -13,6 +13,7 @@ pub enum Event {
     ServerEvent(ServerEvent),
     MicAudioChunk(Vec<u8>),
     MicAudioEnd,
+    WakeWordDetected(i32), // 唤醒词检测事件，包含唤醒词ID
 }
 
 #[allow(dead_code)]
@@ -45,6 +46,9 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
                 },
                 Event::ServerEvent(_)=>{
                     log::info!("Received ServerEvent: {:?}", evt);
+                },
+                Event::WakeWordDetected(id)=>{
+                    log::info!("Received WakeWordDetected event with ID: {}", id);
                 },
             }
             Some(evt)
@@ -117,6 +121,7 @@ pub async fn main_work<'d>(
     player_tx: audio::PlayerTx,
     mut evt_rx: mpsc::Receiver<Event>,
     backgroud_buffer: Option<&'d [u8]>,
+    afe_handle: std::sync::Arc<audio::AFE>, // 添加AFE句柄参数
 ) -> anyhow::Result<()> {
     #[derive(PartialEq, Eq)]
     enum State {
@@ -135,6 +140,8 @@ pub async fn main_work<'d>(
     let mut new_gui_bg = vec![];
 
     let mut state = State::Idle;
+    // 初始状态为idle，设置AFE为idle状态
+    afe_handle.set_idle();
 
     let mut submit_audio = 0.0;
 
@@ -153,6 +160,7 @@ pub async fn main_work<'d>(
 
                 if state == State::Listening {
                     state = State::Idle;
+                    afe_handle.set_idle(); // 设置为空闲状态
                     gui.state = "Idle".to_string();
                     gui.display_flush().unwrap();
                 } else {
@@ -165,9 +173,41 @@ pub async fn main_work<'d>(
                     log::info!("Hello response received");
 
                     state = State::Listening;
+                    afe_handle.set_listening(); // 设置为监听状态
                     gui.state = "Listening...".to_string();
                     gui.display_flush().unwrap();
                 }
+            },
+            Event::WakeWordDetected(id) => {
+                log::info!("Received wake word with ID: {}", id);
+                
+                if state == State::Idle {
+                    // 在idle状态下检测到唤醒词("hi esp", ID=1)
+                    if id == 1 {
+                        log::info!("Switching to listening state due to wake word");
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        player_tx
+                            .send(AudioData::Hello(tx))
+                            .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
+                        log::info!("Waiting for hello response");
+                        let _ = rx.await;
+                        log::info!("Hello response received");
+
+                        state = State::Listening;
+                        afe_handle.set_listening(); // 设置为监听状态
+                        gui.state = "Listening...".to_string();
+                        gui.display_flush().unwrap();
+                    }
+                } else if state == State::Listening {
+                    // 在listening状态下检测到第二个唤醒词(ID=2)
+                    if id == 2 {
+                        log::info!("Switching back to idle state due to wake word");
+                        state = State::Idle;
+                        afe_handle.set_idle(); // 设置为空闲状态
+                        gui.state = "Idle".to_string();
+                    gui.display_flush().unwrap();
+                }
+            },        }
             }
             Event::Event(Event::K0_) => {
                 if state == State::Idle || state == State::Listening {
