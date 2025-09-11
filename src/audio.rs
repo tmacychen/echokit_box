@@ -11,6 +11,8 @@ const PORT_TICK_PERIOD_MS: u32 = 1000 / esp_idf_svc::sys::configTICK_RATE_HZ;
 unsafe fn afe_init() -> (
     *mut esp_sr::esp_afe_sr_iface_t,
     *mut esp_sr::esp_afe_sr_data_t,
+    *mut esp_sr::esp_mn_iface_t,
+    *mut esp_sr::model_iface_data_t,
 ) {
     let models = esp_sr::esp_srmodel_init("model\0".as_ptr() as *const _);
     let afe_config = esp_sr::afe_config_init(
@@ -41,12 +43,35 @@ unsafe fn afe_init() -> (
     log::info!("audio chunksize: {}", audio_chunksize);
 
     esp_sr::afe_config_free(afe_config);
-    (afe_handle, afe_data)
+
+    // Initialize multinet for command recognition
+    let prefix_str = "nm";
+    let chinese_str = "cn"
+    let mn_name = esp_sr::esp_srmodel_filter(
+            models,
+            prefix_str.as_ptr() as *const i8,
+            chinese_str.as_ptr() as *const i8,
+    );
+
+
+    let multinet = esp_sr::esp_mn_handle_from_name(mn_name).as_mut().unwrap();
+    let model_data = (multinet.create.unwra())(mn_name,6000);
+
+
+    // Setup speech commands
+    esp_sr::esp_mn_commands_clear();
+    esp_sr::esp_mn_commands_add(1, Vec::from(b"hi esp\0").as_ptr() as *const i8);
+    esp_sr::esp_mn_commands_update();
+    
+    (afe_handle, afe_data,multinet,model_data)
 }
 
 struct AFE {
     handle: *mut esp_sr::esp_afe_sr_iface_t,
     data: *mut esp_sr::esp_afe_sr_data_t,
+    multinet:*mut esp_sr::esp_mn_iface_t,
+    model_data:*mut esp_sr::model_iface_data_t,
+    
     #[allow(unused)]
     feed_chunksize: usize,
 }
@@ -62,13 +87,15 @@ struct AFEResult {
 impl AFE {
     fn new() -> Self {
         unsafe {
-            let (handle, data) = afe_init();
+            let (handle, data,multinet, model_data) = afe_init();
             let feed_chunksize =
                 (handle.as_mut().unwrap().get_feed_chunksize.unwrap())(data) as usize;
 
             AFE {
                 handle,
                 data,
+                multinet,
+                model_data,
                 feed_chunksize,
             }
         }
@@ -79,8 +106,11 @@ impl AFE {
     fn reset(&self) {
         let afe_handle = self.handle;
         let afe_data = self.data;
+        let multinet = self.multinet;
+        let model_data = self.model_data
         unsafe {
             (afe_handle.as_ref().unwrap().reset_vad.unwrap())(afe_data);
+            (multinet.as_ref().unwrap().reset_vad.unwrap())(model_data);
         }
     }
 
@@ -92,6 +122,13 @@ impl AFE {
         }
     }
 
+    fn nm_feed(&self, data: &[u8]) -> i32 {
+        let multinet = self.multinet;
+        let model_data = self.model_data
+        unsafe {
+            (multinet.as_ref().unwrap().feed.unwrap())(model_data, data.as_ptr() as *const i16)
+        }
+    }
     fn fetch(&self) -> Result<AFEResult, i32> {
         let afe_handle = self.handle;
         let afe_data = self.data;
