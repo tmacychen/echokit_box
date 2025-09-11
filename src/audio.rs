@@ -5,13 +5,14 @@ use esp_idf_svc::hal::i2s::{config, I2sDriver, I2S0, I2S1};
 
 use esp_idf_svc::sys::esp_sr;
 
+use std::ffi::c_void;
 const SAMPLE_RATE: u32 = 16000;
 const PORT_TICK_PERIOD_MS: u32 = 1000 / esp_idf_svc::sys::configTICK_RATE_HZ;
 
 unsafe fn afe_init() -> (
     *mut esp_sr::esp_afe_sr_iface_t,
     *mut esp_sr::esp_afe_sr_data_t,
-    *mut esp_sr::esp_mn_iface_t,
+    *mut esp_sr::esp_wn_iface_t,
     *mut esp_sr::model_iface_data_t,
 ) {
     let models = esp_sr::esp_srmodel_init("model\0".as_ptr() as *const _);
@@ -45,33 +46,27 @@ unsafe fn afe_init() -> (
     esp_sr::afe_config_free(afe_config);
 
     // Initialize multinet for command recognition
-    let prefix_str = "nm";
-    let chinese_str = "cn"
-    let mn_name = esp_sr::esp_srmodel_filter(
-            models,
-            prefix_str.as_ptr() as *const i8,
-            chinese_str.as_ptr() as *const i8,
+    let wn_prefix = "wn";
+    let chinese = "cn";
+    let wn_name = esp_sr::esp_srmodel_filter(
+        models,
+        wn_prefix.as_ptr() as *const u8,
+        chinese.as_ptr() as *const u8,
     );
 
+    let wakenet = esp_sr::esp_wn_handle_from_name(wn_name).cast_mut();
+    let model_data =
+        ((*wakenet).create.unwrap())(wn_name as *const c_void, esp_sr::det_mode_t_DET_MODE_2CH_90);
 
-    let multinet = esp_sr::esp_mn_handle_from_name(mn_name).as_mut().unwrap();
-    let model_data = (multinet.create.unwra())(mn_name,6000);
-
-
-    // Setup speech commands
-    esp_sr::esp_mn_commands_clear();
-    esp_sr::esp_mn_commands_add(1, Vec::from(b"hi esp\0").as_ptr() as *const i8);
-    esp_sr::esp_mn_commands_update();
-    
-    (afe_handle, afe_data,multinet,model_data)
+    (afe_handle, afe_data, wakenet, model_data)
 }
 
 struct AFE {
     handle: *mut esp_sr::esp_afe_sr_iface_t,
     data: *mut esp_sr::esp_afe_sr_data_t,
-    multinet:*mut esp_sr::esp_mn_iface_t,
-    model_data:*mut esp_sr::model_iface_data_t,
-    
+    wakenet: *mut esp_sr::esp_wn_iface_t,
+    model_data: *mut esp_sr::model_iface_data_t,
+
     #[allow(unused)]
     feed_chunksize: usize,
 }
@@ -87,14 +82,14 @@ struct AFEResult {
 impl AFE {
     fn new() -> Self {
         unsafe {
-            let (handle, data,multinet, model_data) = afe_init();
+            let (handle, data, wakenet, model_data) = afe_init();
             let feed_chunksize =
                 (handle.as_mut().unwrap().get_feed_chunksize.unwrap())(data) as usize;
 
             AFE {
                 handle,
                 data,
-                multinet,
+                wakenet,
                 model_data,
                 feed_chunksize,
             }
@@ -106,11 +101,8 @@ impl AFE {
     fn reset(&self) {
         let afe_handle = self.handle;
         let afe_data = self.data;
-        let multinet = self.multinet;
-        let model_data = self.model_data
         unsafe {
             (afe_handle.as_ref().unwrap().reset_vad.unwrap())(afe_data);
-            (multinet.as_ref().unwrap().reset_vad.unwrap())(model_data);
         }
     }
 
@@ -122,13 +114,13 @@ impl AFE {
         }
     }
 
-    fn nm_feed(&self, data: &[u8]) -> i32 {
-        let multinet = self.multinet;
-        let model_data = self.model_data
-        unsafe {
-            (multinet.as_ref().unwrap().feed.unwrap())(model_data, data.as_ptr() as *const i16)
-        }
-    }
+    // fn nm_feed(&self, data: &[u8]) -> i32 {
+    //     let wakenet = self.wakenet;
+    //     let model_data = self.model_data;
+    //     unsafe {
+    //         (wakenet.as_ref().unwrap().feed.unwrap())(model_data, data.as_ptr() as *const i16)
+    //     }
+    // }
     fn fetch(&self) -> Result<AFEResult, i32> {
         let afe_handle = self.handle;
         let afe_data = self.data;
@@ -197,6 +189,15 @@ pub async fn i2s_task_(
     } else {
         log::info!("I2S test completed successfully");
     }
+    // let r = wk_player_(
+    //     i2s, ws, sck, din, i2s1, bclk, lrclk, dout, afe_handle, rx, tx,
+    // )
+    // .await;
+    // if let Err(e) = r {
+    //     log::error!("Error: {}", e);
+    // } else {
+    //     log::info!("wk_player completed successfully");
+    // }
     let r = afe_r.join().unwrap();
     if let Err(e) = r {
         log::error!("Error: {}", e);
@@ -314,7 +315,68 @@ async fn i2s_player_(
 
     // Ok(())
 }
+/*
+async fn wk_player_(
+    i2s: I2S0,
+    ws: AnyIOPin,
+    sck: AnyIOPin,
+    din: AnyIOPin,
+    i2s1: I2S1,
+    bclk: AnyIOPin,
+    lrclk: AnyIOPin,
+    dout: AnyIOPin,
+    afe_handle: Arc<AFE>,
+    mut rx: PlayerRx,
+    mut tx: MicTx,
+) -> anyhow::Result<()> {
+    let i2s_config = config::StdConfig::new(
+        config::Config::default().auto_clear(true),
+        config::StdClkConfig::from_sample_rate_hz(SAMPLE_RATE),
+        config::StdSlotConfig::philips_slot_default(
+            config::DataBitWidth::Bits16,
+            config::SlotMode::Mono,
+        ),
+        config::StdGpioConfig::default(),
+    );
 
+    let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
+    let mut rx_driver = I2sDriver::new_std_rx(i2s, &i2s_config, sck, din, mclk, ws).unwrap();
+    rx_driver.rx_enable()?;
+
+    let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
+    let mut tx_driver = I2sDriver::new_std_tx(i2s1, &i2s_config, bclk, dout, mclk, lrclk).unwrap();
+    tx_driver.tx_enable()?;
+
+    // 10ms
+    let mut buf = [0u8; 2 * 160];
+    let mut speaking = false;
+
+    loop {
+        let data = if speaking {
+            rx.recv().await
+        } else {
+            tokio::select! {
+                Some(data) = rx.recv() =>{
+                    Some(data)
+                }
+                _ = async {} => {
+                    for _ in 0..10{
+                        let n = rx_driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
+                        afe_handle.nm_feed(&buf[..n]);
+                    }
+                    None
+                }
+            }
+        };
+        if let Some(data) = data {
+            tx.blocking_send(crate::app::Event::Event(Event::GAIA))
+                .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+*/
 pub async fn i2s_task(
     i2s: I2S0,
     bclk: AnyIOPin,
