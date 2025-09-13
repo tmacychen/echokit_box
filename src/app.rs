@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 use tokio_websockets::Message;
 
 use crate::{
-    audio::{self, AudioData},
+    audio::{self, AudioData, WakeWordResult},
     protocol::ServerEvent,
     ws::Server,
 };
@@ -13,6 +13,7 @@ pub enum Event {
     ServerEvent(ServerEvent),
     MicAudioChunk(Vec<u8>),
     MicAudioEnd,
+    WakeWordDetec(WakeWordResult),
 }
 
 #[allow(dead_code)]
@@ -46,6 +47,9 @@ async fn select_evt(evt_rx: &mut mpsc::Receiver<Event>, server: &mut Server) -> 
                 Event::ServerEvent(_)=>{
                     log::info!("Received ServerEvent: {:?}", evt);
                 },
+                Event::WakeWordDetec(wak_word_result)=>{
+                     log::info!("Received WakeWord Event: {:?}", wak_word_result);
+                }
             }
             Some(evt)
         }
@@ -116,9 +120,11 @@ pub async fn main_work<'d>(
     mut server: Server,
     player_tx: audio::PlayerTx,
     mut evt_rx: mpsc::Receiver<Event>,
+
     backgroud_buffer: Option<&'d [u8]>,
 ) -> anyhow::Result<()> {
-    #[derive(PartialEq, Eq)]
+    
+     #[derive(PartialEq, Eq,Debug,Clone,Copy)]
     enum State {
         Listening,
         Recording,
@@ -129,7 +135,7 @@ pub async fn main_work<'d>(
 
     let mut gui = crate::ui::UI::new(backgroud_buffer)?;
 
-    gui.state = "Idle".to_string();
+gui.state = "Idle".to_string();
     gui.display_flush().unwrap();
 
     let mut new_gui_bg = vec![];
@@ -146,6 +152,44 @@ pub async fn main_work<'d>(
 
     while let Some(evt) = select_evt(&mut evt_rx, &mut server).await {
         match evt {
+            Event::WakeWordDetec(result) => {
+                log::info!(
+                    "Wake word detected: model {}, word {}",
+                    result.model_index,
+                    result.word_index
+                );
+                match (state, result.model_index) {
+                    (State::Idle, 0) => {
+                        state = State::Listening;
+                        gui.state = "Listening...".to_string();
+                        gui.text = "唤醒词检测成功，正在监听...".to_string();
+                        gui.display_flush().unwrap();
+
+                        // 播放提示音
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        player_tx
+                            .send(AudioData::Hello(tx))
+                            .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
+                        let _ = rx.await;
+                    }
+                    (State::Listening, 1) => {
+                        state = State::Idle;
+                        gui.state = "等待唤醒词".to_string();
+                        gui.text = "等待语音唤醒词: 'Hi, 乐鑫'".to_string();
+                        gui.display_flush().unwrap();
+
+                        // 播放提示音
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        player_tx
+                            .send(AudioData::Hello(tx))
+                            .map_err(|e| anyhow::anyhow!("Error sending hello: {e:?}"))?;
+                        let _ = rx.await;
+                    }
+                    _ => {
+                        log::warn!("Unexpected wake word detection: state {:?}, model {}", state, result.model_index);
+                    }
+                }
+            }
             Event::Event(Event::GAIA | Event::K0) => {
                 log::info!("Received event: gaia");
                 // gui.state = "gaia".to_string();

@@ -1,9 +1,15 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use esp_idf_svc::hal::gpio::AnyIOPin;
 use esp_idf_svc::hal::i2s::{config, I2sDriver, I2S0, I2S1};
 
 use esp_idf_svc::sys::esp_sr;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AudioState {
+    Idle,
+    Listening,
+}
 
 use std::ffi::c_void;
 const SAMPLE_RATE: u32 = 16000;
@@ -12,15 +18,13 @@ const PORT_TICK_PERIOD_MS: u32 = 1000 / esp_idf_svc::sys::configTICK_RATE_HZ;
 unsafe fn afe_init() -> (
     *mut esp_sr::esp_afe_sr_iface_t,
     *mut esp_sr::esp_afe_sr_data_t,
-    *mut esp_sr::esp_wn_iface_t,
-    *mut esp_sr::model_iface_data_t,
 ) {
     let models = esp_sr::esp_srmodel_init("model\0".as_ptr() as *const _);
     let afe_config = esp_sr::afe_config_init(
         "M\0".as_ptr() as _,
         models,
-        esp_sr::afe_type_t_AFE_TYPE_VC,
-        esp_sr::afe_mode_t_AFE_MODE_HIGH_PERF,
+        esp_sr::afe_type_t_AFE_TYPE_SR,
+        esp_sr::afe_mode_t_AFE_MODE_LOW_COST,
     );
     let afe_config = afe_config.as_mut().unwrap();
     afe_config.pcm_config.total_ch_num = 1;
@@ -31,11 +35,29 @@ unsafe fn afe_init() -> (
     afe_config.vad_min_noise_ms = 500;
     afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_1;
     afe_config.agc_init = true;
-
-    log::info!("{afe_config:?}");
+    afe_config.wakenet_init = true;
+    // 配置双唤醒词模型
+    afe_config.wakenet_model_name = "wn9_hiesp\0".as_ptr() as _; // idle状态唤醒词
+    afe_config.wakenet_model_name_2 = "wn9_hiesp\0".as_ptr() as _; // listening状态唤醒词
+                                                                   // afe_config.wakenet_mode = esp_sr::wakenet_mode_t_WAKENET_MODE_DOUBLE;
 
     let afe_ringbuf_size = afe_config.afe_ringbuf_size;
     log::info!("afe ringbuf size: {}", afe_ringbuf_size);
+
+    // 打印唤醒词模型信息
+    if !afe_config.wakenet_model_name.is_null() {
+        log::info!(
+            "wakeword model in AFE config:{:?}",
+            afe_config.wakenet_model_name
+        );
+    }
+    // 打印唤醒词模型信息
+    if !afe_config.wakenet_model_name_2.is_null() {
+        log::info!(
+            "wakeword model in AFE config:{:?}",
+            afe_config.wakenet_model_name_2
+        );
+    }
 
     let afe_handle = esp_sr::esp_afe_handle_from_config(afe_config);
     let afe_handle = afe_handle.as_mut().unwrap();
@@ -46,51 +68,56 @@ unsafe fn afe_init() -> (
     esp_sr::afe_config_free(afe_config);
 
     // Initialize multinet for command recognition
-    let wn_prefix = "wn";
-    let chinese = "cn";
-    let wn_name = esp_sr::esp_srmodel_filter(
-        models,
-        wn_prefix.as_ptr() as *const u8,
-        chinese.as_ptr() as *const u8,
-    );
+    // let wn_prefix = "wn";
+    // let wn_name = esp_sr::esp_srmodel_filter(
+    //     models,
+    //     wn_prefix.as_ptr() as *const u8,
+    //     "nihaoxiaozhi".as_ptr() as *const u8,
+    // );
 
-    let wakenet = esp_sr::esp_wn_handle_from_name(wn_name).cast_mut();
-    let model_data =
-        ((*wakenet).create.unwrap())(wn_name as *const c_void, esp_sr::det_mode_t_DET_MODE_2CH_90);
+    // let wakenet = esp_sr::esp_wn_handle_from_name(wn_name).cast_mut();
+    // let model_data =
+    //     ((*wakenet).create.unwrap())(wn_name as *const c_void, esp_sr::det_mode_t_DET_MODE_2CH_90);
 
-    (afe_handle, afe_data, wakenet, model_data)
+    log::info!("{afe_config:?}");
+    (afe_handle, afe_data)
 }
 
 struct AFE {
     handle: *mut esp_sr::esp_afe_sr_iface_t,
     data: *mut esp_sr::esp_afe_sr_data_t,
-    wakenet: *mut esp_sr::esp_wn_iface_t,
-    model_data: *mut esp_sr::model_iface_data_t,
-
-    #[allow(unused)]
+    state: Arc<Mutex<AudioState>>,
     feed_chunksize: usize,
 }
 
 unsafe impl Send for AFE {}
 unsafe impl Sync for AFE {}
 
+// 唤醒词检测结果
+#[derive(Debug)]
+pub struct WakeWordResult {
+    pub detected: bool,
+    pub model_index: i32,
+    pub word_index: i32,
+}
+
 struct AFEResult {
     data: Vec<u8>,
     speech: bool,
+    wake_state: WakeWordResult,
 }
 
 impl AFE {
-    fn new() -> Self {
+    fn new(state: Arc<Mutex<AudioState>>) -> Self {
         unsafe {
-            let (handle, data, wakenet, model_data) = afe_init();
+            let (handle, data) = afe_init();
             let feed_chunksize =
                 (handle.as_mut().unwrap().get_feed_chunksize.unwrap())(data) as usize;
 
             AFE {
                 handle,
                 data,
-                wakenet,
-                model_data,
+                state,
                 feed_chunksize,
             }
         }
@@ -148,7 +175,17 @@ impl AFE {
             };
 
             let speech = vad_state == esp_sr::vad_state_t_VAD_SPEECH;
-            Ok(AFEResult { data, speech })
+            // 检查唤醒词检测状态（从main.c移植）
+            let wake_word_state = WakeWordResult {
+                detected: result.wakeup_state == esp_sr::wakenet_state_t_WAKENET_DETECTED,
+                model_index: result.wakenet_model_index,
+                word_index: result.wake_word_index,
+            };
+            Ok(AFEResult {
+                data,
+                speech,
+                wake_state: wake_word_state,
+            })
         }
     }
 }
@@ -180,7 +217,8 @@ pub async fn i2s_task_(
     dout: AnyIOPin,
     (tx, rx): (MicTx, PlayerRx),
 ) {
-    let afe_handle = Arc::new(AFE::new());
+    let state = Arc::new(Mutex::new(AudioState::Idle));
+    let afe_handle = Arc::new(AFE::new(state.clone()));
     let afe_handle_ = afe_handle.clone();
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
     let r = i2s_player_(i2s, ws, sck, din, i2s1, bclk, lrclk, dout, afe_handle, rx).await;
@@ -385,7 +423,8 @@ pub async fn i2s_task(
     ws: AnyIOPin,
     (tx, rx): (MicTx, PlayerRx),
 ) {
-    let afe_handle = Arc::new(AFE::new());
+    let state = Arc::new(Mutex::new(AudioState::Idle));
+    let afe_handle = Arc::new(AFE::new(state.clone()));
     let afe_handle_ = afe_handle.clone();
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
     let r = i2s_player(i2s, bclk, din, dout, ws, afe_handle, rx).await;
@@ -517,6 +556,27 @@ fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
         let result = result.unwrap();
         if result.data.is_empty() {
             continue;
+        }
+
+        // 处理唤醒词检测
+        if result.wake_state.detected {
+            log::info!("Wake word detected");
+            let mut state = afe_handle.state.lock().unwrap();
+            match *state {
+                AudioState::Idle if result.wake_state.model_index == 0 => {
+                    log::info!("Wake word detected in idle state, switching to listening");
+                    *state = AudioState::Listening;
+                    tx.blocking_send(crate::app::Event::WakeWordDetec(result.wake_state))
+                        .map_err(|_| anyhow::anyhow!("Failed to send wake word event"))?;
+                }
+                AudioState::Listening if result.wake_state.model_index == 1 => {
+                    log::info!("Wake word detected in listening state, switching to idle");
+                    *state = AudioState::Idle;
+                    tx.blocking_send(crate::app::Event::WakeWordDetec(result.wake_state))
+                        .map_err(|_| anyhow::anyhow!("Failed to send wake word event"))?;
+                }
+                _ => {}
+            }
         }
 
         if result.speech {
